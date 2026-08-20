@@ -22,6 +22,7 @@ public readonly partial struct SkyShader : ID2D1PixelShader
     private readonly float fog;        // fog density 0..1
     private readonly float lightning;  // instantaneous flash brightness 0..1
     private readonly float wind;       // -1..1, slants precipitation
+    private readonly float pxScale;    // render pixels per effective pixel; keeps precipitation the same size at any window size
     private readonly float4 cardA;     // UI surfaces rain can land on: x, y, w, h in scene pixels
     private readonly float4 cardB;
     private readonly float4 cardC;
@@ -31,6 +32,7 @@ public readonly partial struct SkyShader : ID2D1PixelShader
 
     public SkyShader(float time, float2 resolution, float daylight, float cloud,
                      float rain, float snow, float fog, float lightning, float wind,
+                     float pxScale,
                      float4 cardA, float4 cardB, float4 cardC, float4 cardD,
                      float4 detailsGrid, float4 detailsMeta)
     {
@@ -43,6 +45,7 @@ public readonly partial struct SkyShader : ID2D1PixelShader
         this.fog = fog;
         this.lightning = lightning;
         this.wind = wind;
+        this.pxScale = pxScale;
         this.cardA = cardA;
         this.cardB = cardB;
         this.cardC = cardC;
@@ -161,6 +164,7 @@ public readonly partial struct SkyShader : ID2D1PixelShader
         float2 uv = pos / this.resolution;                       // 0..1, top-left origin
         float2 ar = new(this.resolution.X / this.resolution.Y, 1.0f);
         float2 p = uv * ar;                                      // aspect-corrected
+        float2 pp = pos / this.pxScale;                          // effective pixels: constant physical size at any window size
         float t = this.time;
 
         // ----- base sky gradient -----
@@ -241,7 +245,8 @@ public readonly partial struct SkyShader : ID2D1PixelShader
             {
                 float li = (float)i;
                 float scale = 1.0f + li * 0.9f;
-                float2 q = new((uv.X + uv.Y * slant) * 60.0f / scale, uv.Y * 3.0f / scale);
+                // 18 epx columns, 320 epx streak cycles: drop size no longer grows with the window
+                float2 q = new((pp.X + pp.Y * slant) / (18.0f * scale), pp.Y / (320.0f * scale));
                 float colId = Hlsl.Floor(q.X);
                 float h = Hash11(colId + li * 57.31f);
                 float speed = 2.6f + h * 1.8f - li * 0.4f;
@@ -271,11 +276,11 @@ public readonly partial struct SkyShader : ID2D1PixelShader
             for (int i = 0; i < 3; i++)
             {
                 float li = (float)i;
-                float scale = 9.0f + li * 8.0f;
-                float fall = 0.14f + li * 0.06f;
-                float2 q = p * scale;
-                q.Y -= t * fall * scale; // subtract so flakes translate downward
-                q.X += Hlsl.Sin(t * 0.7f + li * 2.1f + p.Y * 3.0f) * 0.8f + this.wind * t * 1.5f;
+                float cellPx = 130.0f - li * 40.0f; // epx per flake cell, nearer layers larger
+                float fall = 170.0f + li * 80.0f;   // epx per second
+                float2 q = pp / cellPx;
+                q.Y -= t * fall / cellPx; // subtract so flakes translate downward
+                q.X += Hlsl.Sin(t * 0.7f + li * 2.1f + pp.Y * 0.0025f) * 0.8f + this.wind * t * 1.5f;
                 float2 cell = Hlsl.Floor(q);
                 float2 f = Hlsl.Frac(q);
                 float h = Hash21(cell + li * 31.7f);

@@ -97,27 +97,55 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
             root.LayoutUpdated += (_, _) => UpdateCardRects();
         }
         ContentScroller.ViewChanged += (_, _) => UpdateCardRects();
+        SkyCanvas.SizeChanged += (_, _) => UpdateRenderScale();
+    }
+
+    // Longest render-target edge the sky is allowed; larger surfaces (maximized on
+    // high-DPI) pushed frame time past vsync on this GPU and the animation flickered.
+    private const double MaxRenderEdge = 2400.0;
+
+    /// <summary>Renders the sky at reduced resolution on large surfaces and lets the swap chain scale it up.</summary>
+    private void UpdateRenderScale()
+    {
+        double rs = Content?.XamlRoot?.RasterizationScale ?? 1.0;
+        double longest = Math.Max(SkyCanvas.ActualWidth, SkyCanvas.ActualHeight) * rs;
+        float target = longest > MaxRenderEdge ? (float)(MaxRenderEdge / longest) : 1f;
+        if (Math.Abs(SkyCanvas.DpiScale - target) > 0.02f)
+        {
+            SkyCanvas.DpiScale = target;
+            UpdateCardRects();
+        }
     }
 
     private void UpdateCardRects()
     {
         if (Content is not Microsoft.UI.Xaml.UIElement root || Content.XamlRoot is null) return;
-        float scale = (float)Content.XamlRoot.RasterizationScale;
+        // canvas DPI, not RasterizationScale: it tracks DpiScale so rects stay in render-target pixels
+        float scale = SkyCanvas.Dpi / 96f;
         // the forecast cards catch the rain; the top bar is left out on purpose
         sky.CardA = GetRect(HourlyCard, root, scale);
         sky.CardB = GetRect(DailyCard, root, scale);
         sky.CardC = default;
         sky.CardD = default;
 
-        // detail cards are a uniform VariableSizedWrapGrid (174x120 cells, 4px item
+        // detail cards are a uniform VariableSizedWrapGrid (120-tall cells, 4px item
         // margin — keep in sync with MainWindow.xaml); the shader derives each
         // card's rect from the grid so every card catches rain individually
         var panel = DetailsHost.ItemsPanelRoot;
-        if (panel is not null && panel.ActualWidth > 1 && ViewModel.Details.Count > 0)
+        if (panel is VariableSizedWrapGrid wrap && panel.ActualWidth > 1
+            && DetailsHost.ActualWidth > 1 && ViewModel.Details.Count > 0)
         {
+            // balance the wrap grid so the last row is as full as possible
+            // (9 cards → 3×3) instead of leaving one card hanging alone, then
+            // stretch the cells so the grid spans the same width as the big cards
+            int maxFit = Math.Max(1, (int)(DetailsHost.ActualWidth / 174.0));
+            int columns = BalancedColumns(ViewModel.Details.Count, maxFit);
+            double itemWidth = Math.Floor(DetailsHost.ActualWidth / columns);
+            wrap.MaximumRowsOrColumns = columns;
+            if (Math.Abs(wrap.ItemWidth - itemWidth) > 0.5) wrap.ItemWidth = itemWidth;
+
             var rect = GetRect(panel, root, scale);
-            int columns = Math.Max(1, (int)Math.Round(panel.ActualWidth / 174.0));
-            sky.DetailsGrid = new float4(rect.X, rect.Y, 174f * scale, 120f * scale);
+            sky.DetailsGrid = new float4(rect.X, rect.Y, (float)itemWidth * scale, 120f * scale);
             sky.DetailsMeta = new float4(columns, ViewModel.Details.Count, 4f * scale, 0);
         }
         else
@@ -125,6 +153,24 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
             sky.DetailsGrid = default;
             sky.DetailsMeta = default;
         }
+    }
+
+    /// <summary>
+    /// Column count that leaves the fewest empty cells in the last row,
+    /// so the grid ends in a straight line whenever the count allows it.
+    /// Ties go to the wider layout.
+    /// </summary>
+    private static int BalancedColumns(int count, int maxFit)
+    {
+        if (count <= maxFit) return count;
+        int best = maxFit;
+        int bestEmpty = (maxFit - count % maxFit) % maxFit;
+        for (int c = maxFit - 1; c >= 2 && bestEmpty > 0; c--)
+        {
+            int empty = (c - count % c) % c;
+            if (empty < bestEmpty) { best = c; bestEmpty = empty; }
+        }
+        return best;
     }
 
     private static float4 GetRect(Microsoft.UI.Xaml.FrameworkElement el, Microsoft.UI.Xaml.UIElement root, float scale)
@@ -160,6 +206,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         skyEffect.ConstantBuffer = new SkyShader(
             t, res,
             sky.Daylight, sky.Cloud, sky.Rain, sky.Snow, sky.Fog, sky.Lightning, sky.Wind,
+            scale,
             sky.CardA, sky.CardB, sky.CardC, sky.CardD,
             sky.DetailsGrid, sky.DetailsMeta);
 

@@ -9,8 +9,10 @@
 
     <Grid RequestedTheme="Dark">
         <!-- animated GPU sky -->
+        <!-- ClearColor is a mid-sky tone so a late frame shows sky, never a black flash -->
         <canvas:CanvasAnimatedControl
             x:Name="SkyCanvas"
+            ClearColor="#FF41618E"
             CreateResources="OnCreateResources"
             Draw="OnDraw" />
 
@@ -128,8 +130,11 @@
                     </StackPanel>
                 </Border>
 
-                <!-- detail cards -->
-                <ItemsControl x:Name="DetailsHost" Grid.Row="4" ItemsSource="{x:Bind ViewModel.Details}">
+                <!-- detail cards: -4 side margin cancels the item margin so the outer
+                     card faces align flush with the forecast cards above; ItemWidth
+                     is set from code so the grid always spans the full column -->
+                <ItemsControl x:Name="DetailsHost" Grid.Row="4" Margin="-4,0,-4,0"
+                              ItemsSource="{x:Bind ViewModel.Details}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <VariableSizedWrapGrid Orientation="Horizontal" ItemWidth="174" ItemHeight="120"
