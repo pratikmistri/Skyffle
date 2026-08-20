@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Skyffle</RootNamespace>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- No Visual Studio on this machine: skip the VS-only PRI tasks; a post-build
+         target below generates resources.pri directly with makepri.exe instead. -->
+    <EnablePriGenTooling>false</EnablePriGenTooling>
+    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.*" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.*" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.*" />
+    <PackageReference Include="ComputeSharp.D2D1.WinUI" Version="3.1.*" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.*" />
+  </ItemGroup>
+
+  <!-- No VS on this machine, so the standard PRI pipeline is disabled above.
+       Recreate resources.pri with makepri.exe: stage the compiled XBFs plus the
+       WinUI dependency .pri files and index them together. -->
+  <Target Name="GenerateSkyfflePri" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup>
+      <_MakePriHostArch>x64</_MakePriHostArch>
+      <_MakePriHostArch Condition="'$(PROCESSOR_ARCHITECTURE)' == 'ARM64'">arm64</_MakePriHostArch>
+      <_PriStageDir>$(IntermediateOutputPath)pristage\</_PriStageDir>
+      <_PriConfigFile>$(IntermediateOutputPath)priconfig.xml</_PriConfigFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <_MakePriCandidate Include="$(NuGetPackageRoot)microsoft.windows.sdk.buildtools\*\bin\*\$(_MakePriHostArch)\makepri.exe" />
+      <_PriStageFiles Include="$(TargetDir)*.xbf; $(TargetDir)Microsoft.UI.pri; $(TargetDir)Microsoft.UI.Xaml.Controls.pri" />
+    </ItemGroup>
+    <PropertyGroup>
+      <!-- multiple SDK build-tools versions may be restored; batching leaves the last (newest) -->
+      <_MakePriExe>%(_MakePriCandidate.Identity)</_MakePriExe>
+    </PropertyGroup>
+    <Error Condition="'$(_MakePriExe)' == ''" Text="makepri.exe not found under $(NuGetPackageRoot)microsoft.windows.sdk.buildtools" />
+    <RemoveDir Directories="$(_PriStageDir)" />
+    <Copy SourceFiles="@(_PriStageFiles)" DestinationFolder="$(_PriStageDir)" />
+    <Exec Command="&quot;$(_MakePriExe)&quot; createconfig /cf &quot;$(_PriConfigFile)&quot; /dq en-US /pv 10.0.0 /o" StandardOutputImportance="low" />
+    <Exec Command="&quot;$(_MakePriExe)&quot; new /pr &quot;$(_PriStageDir).&quot; /cf &quot;$(_PriConfigFile)&quot; /of &quot;$(TargetDir)resources.pri&quot; /in $(TargetName) /o" StandardOutputImportance="low" />
+  </Target>
+</Project>

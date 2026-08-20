@@ -1,0 +1,12 @@
+# Build output
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+.vs/
+
+# MSIX packaging
+AppPackages/
+BundleArtifacts/
