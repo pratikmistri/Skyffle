@@ -176,6 +176,7 @@
             <AutoSuggestBox
                 x:Name="SearchBox"
                 Width="340"
+                CornerRadius="20"
                 HorizontalAlignment="Center" VerticalAlignment="Center"
                 PlaceholderText="Search for a city…"
                 QueryIcon="Find"
@@ -184,8 +185,8 @@
                 ItemsSource="{x:Bind ViewModel.Suggestions}">
                 <AutoSuggestBox.TextBoxStyle>
                     <Style TargetType="TextBox" BasedOn="{StaticResource AutoSuggestBoxTextBoxStyle}">
-                        <Setter Property="CornerRadius" Value="16" />
-                        <Setter Property="Padding" Value="14,5,10,7" />
+                        <Setter Property="CornerRadius" Value="20" />
+                        <Setter Property="Padding" Value="16,8,12,10" />
                     </Style>
                 </AutoSuggestBox.TextBoxStyle>
                 <AutoSuggestBox.ItemTemplate>

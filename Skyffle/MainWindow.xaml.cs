@@ -16,6 +16,36 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
     private readonly SkyState sky = new();
     private PixelShaderEffect<SkyShader>? skyEffect;
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtrW(IntPtr hwnd, int index, IntPtr newProc);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
+    private static extern IntPtr CallWindowProcW(IntPtr prevProc, IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private const int GWLP_WNDPROC = -4;
+    private const uint WM_GETMINMAXINFO = 0x0024;
+
+    private PointInt32 minTrackSize;
+    private WndProcDelegate? wndProcHook; // field ref keeps the delegate alive for the hook's lifetime
+    private IntPtr prevWndProc;
+
+    private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        var result = CallWindowProcW(prevWndProc, hwnd, msg, wParam, lParam);
+        if (msg == WM_GETMINMAXINFO)
+        {
+            // MINMAXINFO: ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize (offset 24), ptMaxTrackSize
+            System.Runtime.InteropServices.Marshal.WriteInt32(lParam, 24, minTrackSize.X);
+            System.Runtime.InteropServices.Marshal.WriteInt32(lParam, 28, minTrackSize.Y);
+        }
+        return result;
+    }
+
     public MainWindow()
     {
         InitializeComponent();
@@ -33,7 +63,18 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF);
         titleBar.ButtonPressedForegroundColor = Microsoft.UI.Colors.White;
         SetTitleBar(TitleBarDragRegion);
-        AppWindow.Resize(new SizeInt32(1040, 1200));
+
+        // below ~760 epx the centered search box collides with the title-bar buttons;
+        // WinAppSDK 1.6 has no presenter min-size API, so clamp via WM_GETMINMAXINFO
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        double scale = GetDpiForWindow(hwnd) / 96.0;
+        minTrackSize = new PointInt32((int)(760 * scale), (int)(520 * scale));
+        wndProcHook = WndProc;
+        prevWndProc = SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+            System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(wndProcHook));
+
+        // WM_GETMINMAXINFO only guards user drags, so clamp the startup size ourselves
+        AppWindow.Resize(new SizeInt32(Math.Max(1040, minTrackSize.X), Math.Max(1200, minTrackSize.Y)));
 
         ViewModel.WeatherApplied += (code, isDay, cloudCover, windKmh) =>
         {
