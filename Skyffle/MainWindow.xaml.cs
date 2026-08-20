@@ -30,7 +30,10 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
     private const int GWLP_WNDPROC = -4;
     private const uint WM_GETMINMAXINFO = 0x0024;
 
-    private PointInt32 minTrackSize;
+    // below ~760 epx the centered search box collides with the title-bar buttons
+    private const int MinWidthEpx = 760;
+    private const int MinHeightEpx = 520;
+
     private WndProcDelegate? wndProcHook; // field ref keeps the delegate alive for the hook's lifetime
     private IntPtr prevWndProc;
 
@@ -39,9 +42,12 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         var result = CallWindowProcW(prevWndProc, hwnd, msg, wParam, lParam);
         if (msg == WM_GETMINMAXINFO)
         {
+            // read the DPI per message, not at construction: the window may since have
+            // moved to a monitor with a different scale, and ptMinTrackSize is physical px
+            double scale = GetDpiForWindow(hwnd) / 96.0;
             // MINMAXINFO: ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize (offset 24), ptMaxTrackSize
-            System.Runtime.InteropServices.Marshal.WriteInt32(lParam, 24, minTrackSize.X);
-            System.Runtime.InteropServices.Marshal.WriteInt32(lParam, 28, minTrackSize.Y);
+            System.Runtime.InteropServices.Marshal.WriteInt32(lParam, 24, (int)(MinWidthEpx * scale));
+            System.Runtime.InteropServices.Marshal.WriteInt32(lParam, 28, (int)(MinHeightEpx * scale));
         }
         return result;
     }
@@ -64,41 +70,64 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         titleBar.ButtonPressedForegroundColor = Microsoft.UI.Colors.White;
         SetTitleBar(TitleBarDragRegion);
 
-        // below ~760 epx the centered search box collides with the title-bar buttons;
         // WinAppSDK 1.6 has no presenter min-size API, so clamp via WM_GETMINMAXINFO
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        double scale = GetDpiForWindow(hwnd) / 96.0;
-        minTrackSize = new PointInt32((int)(760 * scale), (int)(520 * scale));
         wndProcHook = WndProc;
         prevWndProc = SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
             System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(wndProcHook));
 
         // WM_GETMINMAXINFO only guards user drags, so clamp the startup size ourselves
-        AppWindow.Resize(new SizeInt32(Math.Max(1040, minTrackSize.X), Math.Max(1200, minTrackSize.Y)));
+        double startScale = GetDpiForWindow(hwnd) / 96.0;
+        AppWindow.Resize(new SizeInt32(
+            Math.Max(1040, (int)(MinWidthEpx * startScale)),
+            Math.Max(1200, (int)(MinHeightEpx * startScale))));
 
         ViewModel.WeatherApplied += (code, isDay, cloudCover, windKmh) =>
         {
             // debug hook: SKYFFLE_FORCE_WMO=<code> [SKYFFLE_FORCE_NIGHT=1] previews any condition
             if (int.TryParse(Environment.GetEnvironmentVariable("SKYFFLE_FORCE_WMO"), out int forced))
             {
-                sky.ApplyWeather(forced, Environment.GetEnvironmentVariable("SKYFFLE_FORCE_NIGHT") != "1", 80, windKmh);
+                code = forced;
+                isDay = Environment.GetEnvironmentVariable("SKYFFLE_FORCE_NIGHT") != "1";
+                cloudCover = 80;
             }
-            else
-            {
-                sky.ApplyWeather(code, isDay, cloudCover, windKmh);
-            }
+            sky.ApplyWeather(code, isDay, cloudCover, windKmh);
+            // late/cleared frames present ClearColor; keep it near what the shader
+            // will draw so neither day nor night ever flashes the wrong brightness
+            SkyCanvas.ClearColor = isDay
+                ? Windows.UI.Color.FromArgb(0xFF, 0x41, 0x61, 0x8E)
+                : Windows.UI.Color.FromArgb(0xFF, 0x0A, 0x12, 0x26);
         };
 
         Closed += (_, _) => SkyCanvas.RemoveFromVisualTree();
+        // don't burn a full GPU frame budget on a sky nobody can see
+        VisibilityChanged += (_, e) => SkyCanvas.Paused = !e.Visible;
 
         // keep the shader's picture of the UI surfaces fresh so rain lands on them
         if (Content is Microsoft.UI.Xaml.FrameworkElement root)
         {
             root.LayoutUpdated += (_, _) => UpdateCardRects();
+            // XamlRoot.Changed covers RasterizationScale changes (different-DPI monitor,
+            // system scale), which don't necessarily fire SizeChanged
+            root.Loaded += (_, _) =>
+            {
+                if (root.XamlRoot is { } xr && !xamlRootHooked)
+                {
+                    xamlRootHooked = true;
+                    xr.Changed += (_, _) => UpdateRenderScale();
+                }
+            };
         }
         ContentScroller.ViewChanged += (_, _) => UpdateCardRects();
         SkyCanvas.SizeChanged += (_, _) => UpdateRenderScale();
+        // column balancing runs on real size/content changes, not every layout pass;
+        // Loaded catches the case where items land before the panel is materialized
+        DetailsHost.SizeChanged += (_, _) => UpdateDetailsColumns();
+        DetailsHost.Loaded += (_, _) => UpdateDetailsColumns();
+        ViewModel.Details.CollectionChanged += (_, _) => UpdateDetailsColumns();
     }
+
+    private bool xamlRootHooked;
 
     // Longest render-target edge the sky is allowed; larger surfaces (maximized on
     // high-DPI) pushed frame time past vsync on this GPU and the animation flickered.
@@ -130,29 +159,39 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
 
         // detail cards are a uniform VariableSizedWrapGrid (120-tall cells, 4px item
         // margin — keep in sync with MainWindow.xaml); the shader derives each
-        // card's rect from the grid so every card catches rain individually
+        // card's rect from the grid so every card catches rain individually.
+        // Read-only here: the wrap grid's actual laid-out values are used so the
+        // shader never sees a column count the panel hasn't applied yet
         var panel = DetailsHost.ItemsPanelRoot;
         if (panel is VariableSizedWrapGrid wrap && panel.ActualWidth > 1
-            && DetailsHost.ActualWidth > 1 && ViewModel.Details.Count > 0)
+            && wrap.ItemWidth > 0 && wrap.MaximumRowsOrColumns > 0 && ViewModel.Details.Count > 0)
         {
-            // balance the wrap grid so the last row is as full as possible
-            // (9 cards → 3×3) instead of leaving one card hanging alone, then
-            // stretch the cells so the grid spans the same width as the big cards
-            int maxFit = Math.Max(1, (int)(DetailsHost.ActualWidth / 174.0));
-            int columns = BalancedColumns(ViewModel.Details.Count, maxFit);
-            double itemWidth = Math.Floor(DetailsHost.ActualWidth / columns);
-            wrap.MaximumRowsOrColumns = columns;
-            if (Math.Abs(wrap.ItemWidth - itemWidth) > 0.5) wrap.ItemWidth = itemWidth;
-
             var rect = GetRect(panel, root, scale);
-            sky.DetailsGrid = new float4(rect.X, rect.Y, (float)itemWidth * scale, 120f * scale);
-            sky.DetailsMeta = new float4(columns, ViewModel.Details.Count, 4f * scale, 0);
+            sky.DetailsGrid = new float4(rect.X, rect.Y, (float)wrap.ItemWidth * scale, 120f * scale);
+            sky.DetailsMeta = new float4(wrap.MaximumRowsOrColumns, ViewModel.Details.Count, 4f * scale, 0);
         }
         else
         {
             sky.DetailsGrid = default;
             sky.DetailsMeta = default;
         }
+    }
+
+    /// <summary>
+    /// Balances the wrap grid so the last row is as full as possible (9 cards → 3×3)
+    /// instead of leaving one card hanging alone, then stretches the cells so the grid
+    /// spans the same width as the big cards. Runs on size/content changes only —
+    /// mutating layout from inside a LayoutUpdated handler risks feedback loops.
+    /// </summary>
+    private void UpdateDetailsColumns()
+    {
+        if (DetailsHost.ItemsPanelRoot is not VariableSizedWrapGrid wrap
+            || DetailsHost.ActualWidth <= 1 || ViewModel.Details.Count == 0) return;
+        int maxFit = Math.Max(1, (int)(DetailsHost.ActualWidth / 174.0));
+        int columns = BalancedColumns(ViewModel.Details.Count, maxFit);
+        double itemWidth = Math.Floor(DetailsHost.ActualWidth / columns);
+        if (wrap.MaximumRowsOrColumns != columns) wrap.MaximumRowsOrColumns = columns;
+        if (Math.Abs(wrap.ItemWidth - itemWidth) > 0.5) wrap.ItemWidth = itemWidth;
     }
 
     /// <summary>

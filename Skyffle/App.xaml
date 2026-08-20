@@ -9,7 +9,6 @@
             </ResourceDictionary.MergedDictionaries>
 
             <!-- Frosted glass card look used across the app -->
-            <SolidColorBrush x:Key="CardFill" Color="#33FFFFFF" />
             <SolidColorBrush x:Key="CardFillDeep" Color="#40182338" />
             <SolidColorBrush x:Key="CardStroke" Color="#28FFFFFF" />
             <SolidColorBrush x:Key="TextPrimary" Color="#FFFFFFFF" />

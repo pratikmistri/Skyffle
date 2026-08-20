@@ -22,7 +22,6 @@ public sealed class CurrentBlock
     [JsonPropertyName("relative_humidity_2m")] public double Humidity { get; set; }
     [JsonPropertyName("apparent_temperature")] public double FeelsLike { get; set; }
     [JsonPropertyName("is_day")] public int IsDay { get; set; }
-    [JsonPropertyName("precipitation")] public double Precipitation { get; set; }
     [JsonPropertyName("weather_code")] public int WeatherCode { get; set; }
     [JsonPropertyName("cloud_cover")] public double CloudCover { get; set; }
     [JsonPropertyName("pressure_msl")] public double Pressure { get; set; }
@@ -38,7 +37,6 @@ public sealed class HourlyBlock
     [JsonPropertyName("precipitation_probability")] public List<double?> PrecipProbability { get; set; } = [];
     [JsonPropertyName("weather_code")] public List<int> WeatherCode { get; set; } = [];
     [JsonPropertyName("is_day")] public List<int> IsDay { get; set; } = [];
-    [JsonPropertyName("uv_index")] public List<double?> UvIndex { get; set; } = [];
     [JsonPropertyName("visibility")] public List<double?> Visibility { get; set; } = [];
     [JsonPropertyName("dew_point_2m")] public List<double?> DewPoint { get; set; } = [];
 }
@@ -72,15 +70,6 @@ public sealed class GeoResult
     public string Display => Admin1 is { Length: > 0 } a && a != Name
         ? $"{Name}, {a}, {Country}"
         : $"{Name}, {Country}";
-}
-
-/// <summary>BigDataCloud reverse-geocode-client response (city-name fallback).</summary>
-public sealed class ReverseGeocodeResponse
-{
-    [JsonPropertyName("city")] public string? City { get; set; }
-    [JsonPropertyName("locality")] public string? Locality { get; set; }
-    [JsonPropertyName("principalSubdivision")] public string? PrincipalSubdivision { get; set; }
-    [JsonPropertyName("countryName")] public string? CountryName { get; set; }
 }
 
 public sealed class AirQualityResponse

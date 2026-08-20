@@ -9,7 +9,8 @@
 
     <Grid RequestedTheme="Dark">
         <!-- animated GPU sky -->
-        <!-- ClearColor is a mid-sky tone so a late frame shows sky, never a black flash -->
+        <!-- ClearColor is a mid-sky tone so a late frame shows sky, never a black flash;
+             code-behind swaps it to a night tone when the applied weather is nighttime -->
         <canvas:CanvasAnimatedControl
             x:Name="SkyCanvas"
             ClearColor="#FF41618E"

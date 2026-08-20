@@ -202,8 +202,8 @@ public readonly partial struct SkyShader : ID2D1PixelShader
             col += (new float3(0.92f, 0.94f, 1.00f) * Hlsl.Saturate(moon - crater * 0.85f) + new float3(0.55f, 0.62f, 0.85f) * moonGlow)
                    * night * clearSky;
 
-            // star field: sparse hash sprinkle, twinkling
-            float2 cell = Hlsl.Floor(pos / 3.0f);
+            // star field: sparse hash sprinkle, twinkling (epx so size/density hold at any DPI)
+            float2 cell = Hlsl.Floor(pp / 3.0f);
             float h = Hash21(cell);
             float star = Hlsl.SmoothStep(0.997f, 1.0f, h);
             float twinkle = 0.55f + 0.45f * Hlsl.Sin(t * 2.2f + h * 251.0f);
@@ -261,12 +261,14 @@ public readonly partial struct SkyShader : ID2D1PixelShader
             }
 
             // ----- splashes: droplets scattering off each card's top edge -----
-            float splash = SplashForCard(pos, this.cardA, t, this.rain)
-                         + SplashForCard(pos, this.cardB, t, this.rain)
-                         + SplashForCard(pos, this.cardC, t, this.rain)
-                         + SplashForCard(pos, this.cardD, t, this.rain)
-                         + SplashForCard(pos, cellHere, t, this.rain)
-                         + SplashForCard(pos, cellBelow, t, this.rain);
+            // evaluated in effective pixels so splash size matches the DPI-invariant drops
+            float inv = 1.0f / this.pxScale;
+            float splash = SplashForCard(pp, this.cardA * inv, t, this.rain)
+                         + SplashForCard(pp, this.cardB * inv, t, this.rain)
+                         + SplashForCard(pp, this.cardC * inv, t, this.rain)
+                         + SplashForCard(pp, this.cardD * inv, t, this.rain)
+                         + SplashForCard(pp, cellHere * inv, t, this.rain)
+                         + SplashForCard(pp, cellBelow * inv, t, this.rain);
             col += new float3(0.75f, 0.83f, 0.95f) * splash * this.rain * (0.35f + 0.65f * this.daylight);
         }
 

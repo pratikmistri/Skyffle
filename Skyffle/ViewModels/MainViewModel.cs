@@ -43,6 +43,7 @@ public partial class MainViewModel : ObservableObject
 
     private readonly OpenMeteoClient api = new();
     private CancellationTokenSource? loadCts;
+    private CancellationTokenSource? searchCts;
 
     public ObservableCollection<SavedLocation> Locations { get; } = [];
     public ObservableCollection<GeoResult> Suggestions { get; } = [];
@@ -105,16 +106,22 @@ public partial class MainViewModel : ObservableObject
 
     public async Task SearchAsync(string query)
     {
+        // cancel the in-flight search so a slow older response can't repopulate
+        // the list after a newer query's results have landed
+        searchCts?.Cancel();
+        var cts = searchCts = new CancellationTokenSource();
         Suggestions.Clear();
         if (query.Trim().Length < 2) return;
         try
         {
-            foreach (var r in await api.SearchAsync(query))
+            var results = await api.SearchAsync(query, cts.Token);
+            if (cts.Token.IsCancellationRequested) return;
+            foreach (var r in results)
             {
                 Suggestions.Add(r);
             }
         }
-        catch { /* transient network issue; suggestions just stay empty */ }
+        catch { /* cancelled or transient network issue; suggestions just stay empty */ }
     }
 
     public void AddLocation(GeoResult geo)
@@ -217,13 +224,19 @@ public partial class MainViewModel : ObservableObject
         var hourly = fc.Hourly;
         if (hourly is not null && hourly.Time.Count > 0)
         {
+            // cur.Time is a 15-minute step (e.g. 14:30); truncate to the hour so the
+            // in-progress hour (14:00) is the "Now" slot, matching the hero reading
             var nowLocal = DateTime.Parse(cur.Time!, CultureInfo.InvariantCulture);
+            var nowHour = new DateTime(nowLocal.Year, nowLocal.Month, nowLocal.Day, nowLocal.Hour, 0, 0);
             int start = 0;
             for (int i = 0; i < hourly.Time.Count; i++)
             {
-                if (DateTime.Parse(hourly.Time[i], CultureInfo.InvariantCulture) >= nowLocal) { start = i; break; }
+                if (DateTime.Parse(hourly.Time[i], CultureInfo.InvariantCulture) >= nowHour) { start = i; break; }
             }
-            for (int i = start; i < Math.Min(start + 24, hourly.Time.Count); i++)
+            // parallel arrays are deserialized independently; bound by every list we index
+            int hourEnd = Math.Min(Math.Min(start + 24, hourly.Time.Count),
+                                   Math.Min(hourly.WeatherCode.Count, hourly.Temperature.Count));
+            for (int i = start; i < hourEnd; i++)
             {
                 var ht = DateTime.Parse(hourly.Time[i], CultureInfo.InvariantCulture);
                 double? pp = i < hourly.PrecipProbability.Count ? hourly.PrecipProbability[i] : null;
@@ -239,15 +252,20 @@ public partial class MainViewModel : ObservableObject
 
         // ----- 10-day with range bars -----
         Days.Clear();
+        HiLo = ""; // reset so a daily-less response doesn't show the previous city's H/L
         var daily = fc.Daily;
-        if (daily is not null && daily.Time.Count > 0)
+        // parallel arrays are deserialized independently; bound by every list we index
+        int dayCount = daily is null ? 0 :
+            Math.Min(Math.Min(daily.Time.Count, daily.WeatherCode.Count),
+                     Math.Min(daily.TempMin.Count, daily.TempMax.Count));
+        if (daily is not null && dayCount > 0)
         {
-            double gMin = daily.TempMin.Min();
-            double gMax = daily.TempMax.Max();
+            double gMin = daily.TempMin.Take(dayCount).Min();
+            double gMax = daily.TempMax.Take(dayCount).Max();
             double span = Math.Max(1, gMax - gMin);
             HiLo = $"H:{Math.Round(daily.TempMax[0])}°  L:{Math.Round(daily.TempMin[0])}°";
 
-            for (int i = 0; i < daily.Time.Count; i++)
+            for (int i = 0; i < dayCount; i++)
             {
                 var d = DateTime.Parse(daily.Time[i], CultureInfo.InvariantCulture);
                 double? pp = i < daily.PrecipProbabilityMax.Count ? daily.PrecipProbabilityMax[i] : null;
@@ -278,7 +296,7 @@ public partial class MainViewModel : ObservableObject
         {
             Details.Add(new DetailItem { Title = "VISIBILITY", Value = vis >= 1000 ? $"{vis / 1000:0.#} km" : $"{vis:0} m", Caption = vis >= 10000 ? "Perfectly clear" : vis >= 4000 ? "Good" : "Reduced" });
         }
-        if (daily is not null && daily.Sunrise.Count > 0)
+        if (daily is not null && daily.Sunrise.Count > 0 && daily.Sunset.Count > 0)
         {
             var sr = DateTime.Parse(daily.Sunrise[0], CultureInfo.InvariantCulture);
             var ss = DateTime.Parse(daily.Sunset[0], CultureInfo.InvariantCulture);
