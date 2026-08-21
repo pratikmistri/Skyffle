@@ -10,3 +10,4 @@ obj/
 # MSIX packaging
 AppPackages/
 BundleArtifacts/
+StorePackages/
