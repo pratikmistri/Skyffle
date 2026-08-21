@@ -79,3 +79,16 @@ $g.Dispose(); $bmp.Dispose()
 Read the PNG and confirm the sky scene renders (sun/moon, forecast rows,
 FEELS LIKE / HUMIDITY / WIND / PRESSURE cards). A blank or offset frame
 means the DPI-aware step was skipped or the window hadn't finished loading.
+
+If the capture shows a different window (SetForegroundWindow can silently
+fail when another app holds the foreground lock), capture the window surface
+directly instead of the screen — declare `PrintWindow` alongside the other
+user32 imports and replace `CopyFromScreen` with:
+
+```powershell
+$hdc = $g.GetHdc()
+[Win32b]::PrintWindow($h, $hdc, 2) | Out-Null  # 2 = PW_RENDERFULLCONTENT, needed for the DirectX sky
+$g.ReleaseHdc($hdc)
+```
+
+This works regardless of z-order and needs no foreground activation.

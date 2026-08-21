@@ -54,6 +54,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private SavedLocation? selectedLocation;
     [ObservableProperty] private string locationName = "";
     [ObservableProperty] private string currentTemp = "--°";
+    [ObservableProperty] private string tempUnit = "";
     [ObservableProperty] private string condition = "";
     [ObservableProperty] private string hiLo = "";
     [ObservableProperty] private string feelsLikeShort = "";
@@ -62,7 +63,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool useFahrenheit;
 
     /// <summary>Raised after a forecast loads so the window can drive the sky shader.</summary>
-    public event Action<int, bool, double, double>? WeatherApplied;
+    public event Action<Graphics.SkyConditions>? WeatherApplied;
 
     public MainViewModel()
     {
@@ -215,7 +216,8 @@ public partial class MainViewModel : ObservableObject
         bool isDay = cur.IsDay == 1;
 
         LocationName = loc.Name;
-        CurrentTemp = $"{Math.Round(cur.Temperature)}°{(UseFahrenheit ? "F" : "C")}";
+        CurrentTemp = $"{Math.Round(cur.Temperature)}°";
+        TempUnit = UseFahrenheit ? "F" : "C";
         Condition = Wmo.Describe(cur.WeatherCode);
         FeelsLikeShort = $"Feels like {Math.Round(cur.FeelsLike)}°";
 
@@ -311,7 +313,43 @@ public partial class MainViewModel : ObservableObject
             Details.Add(new DetailItem { Title = "AIR QUALITY", Value = $"{a:0}", Caption = AqiCaption(a) });
         }
 
-        WeatherApplied?.Invoke(cur.WeatherCode, isDay, cur.CloudCover, cur.WindSpeed);
+        // sun: fraction of the way from sunrise (0) to sunset (1);
+        // moon: fraction of the night from sunset (0) to the next sunrise (1)
+        double sunProgress = 0.5;
+        double moonProgress = 0.5;
+        if (daily is not null && daily.Sunrise.Count > 0 && daily.Sunset.Count > 0 && cur.Time is not null)
+        {
+            var sr = DateTime.Parse(daily.Sunrise[0], CultureInfo.InvariantCulture);
+            var ss = DateTime.Parse(daily.Sunset[0], CultureInfo.InvariantCulture);
+            var now = DateTime.Parse(cur.Time, CultureInfo.InvariantCulture);
+            double spanMin = (ss - sr).TotalMinutes;
+            if (spanMin > 1)
+            {
+                sunProgress = Math.Clamp((now - sr).TotalMinutes / spanMin, 0.0, 1.0);
+            }
+            if (now < sr)
+            {
+                // pre-dawn: yesterday's sunset is a minute or two off today's — close enough
+                var prevSet = ss.AddDays(-1);
+                moonProgress = (now - prevSet).TotalMinutes / (sr - prevSet).TotalMinutes;
+            }
+            else if (now > ss)
+            {
+                var nextRise = daily.Sunrise.Count > 1
+                    ? DateTime.Parse(daily.Sunrise[1], CultureInfo.InvariantCulture)
+                    : sr.AddDays(1);
+                moonProgress = (now - ss).TotalMinutes / Math.Max(1, (nextRise - ss).TotalMinutes);
+            }
+            moonProgress = Math.Clamp(moonProgress, 0.0, 1.0);
+        }
+
+        // synodic phase from a reference new moon (2000-01-06 18:14 UTC): 0 new → 0.5 full
+        const double SynodicDays = 29.530588853;
+        double moonPhase = ((DateTime.UtcNow - new DateTime(2000, 1, 6, 18, 14, 0, DateTimeKind.Utc)).TotalDays
+                            % SynodicDays) / SynodicDays;
+
+        WeatherApplied?.Invoke(new Graphics.SkyConditions(
+            cur.WeatherCode, isDay, cur.CloudCover, cur.WindSpeed, sunProgress, moonProgress, moonPhase));
     }
 
     private static double? TryVisibility(ForecastResponse fc)

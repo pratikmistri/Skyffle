@@ -19,7 +19,9 @@
 
         <!-- content -->
         <ScrollViewer x:Name="ContentScroller" VerticalScrollBarVisibility="Auto">
-            <Grid MaxWidth="760" Padding="24,0,24,32">
+            <!-- 64px side gutters keep the edge carousel arrows clear of the
+                 left-aligned hero text and cards at the minimum window width -->
+            <Grid MaxWidth="840" Padding="64,0,64,32">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -29,28 +31,37 @@
                 </Grid.RowDefinitions>
 
                 <!-- hero: right-click switches °C/°F -->
-                <StackPanel Grid.Row="1" HorizontalAlignment="Center" Margin="0,76,0,24" Spacing="2"
+                <StackPanel Grid.Row="1" HorizontalAlignment="Left" Margin="0,140,0,10" Spacing="2"
                             Background="Transparent" RightTapped="OnHeroRightTapped"
                             ToolTipService.ToolTip="Right-click to switch between °C and °F">
                     <TextBlock Text="{x:Bind ViewModel.LocationName, Mode=OneWay}"
-                               FontSize="34" FontWeight="SemiLight" HorizontalAlignment="Center"
-                               Foreground="{StaticResource TextPrimary}" />
-                    <TextBlock Text="{x:Bind ViewModel.CurrentTemp, Mode=OneWay}"
-                               FontSize="104" FontWeight="ExtraLight" HorizontalAlignment="Center"
-                               Margin="16,-6,0,-6"
-                               Foreground="{StaticResource TextPrimary}" />
+                               FontSize="20" FontWeight="Medium" HorizontalAlignment="Left"
+                               Foreground="{StaticResource TextSecondary}" />
+                    <!-- big bold reading; the unit shares the size and baseline but stays light;
+                         negative top margin swallows the 104px line's ascent slack under the city -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="-4,-20,0,-8">
+                        <TextBlock Text="{x:Bind ViewModel.CurrentTemp, Mode=OneWay}"
+                                   FontSize="104" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimary}" />
+                        <TextBlock Text="{x:Bind ViewModel.TempUnit, Mode=OneWay}"
+                                   FontSize="104" FontWeight="Light" Margin="-4,0,0,0"
+                                   Foreground="{StaticResource TextPrimary}" />
+                    </StackPanel>
                     <TextBlock Text="{x:Bind ViewModel.Condition, Mode=OneWay}"
-                               FontSize="20" HorizontalAlignment="Center"
+                               FontSize="20" FontWeight="Medium" HorizontalAlignment="Left"
                                Foreground="{StaticResource TextSecondary}" />
-                    <TextBlock Text="{x:Bind ViewModel.HiLo, Mode=OneWay}"
-                               FontSize="18" HorizontalAlignment="Center"
-                               Foreground="{StaticResource TextSecondary}" />
-                    <TextBlock Text="{x:Bind ViewModel.FeelsLikeShort, Mode=OneWay}"
-                               FontSize="14" HorizontalAlignment="Center"
-                               Foreground="{StaticResource TextTertiary}" />
-                    <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" Margin="0,8,0,0" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Spacing="12">
+                        <TextBlock Text="{x:Bind ViewModel.HiLo, Mode=OneWay}"
+                                   FontSize="15" FontWeight="Medium"
+                                   Foreground="{StaticResource TextSecondary}" />
+                        <TextBlock Text="{x:Bind ViewModel.FeelsLikeShort, Mode=OneWay}"
+                                   FontSize="15" FontWeight="Medium"
+                                   Foreground="{StaticResource TextTertiary}" />
+                    </StackPanel>
+                    <!-- loading is shown ambiently: code-behind dims the content column
+                         while a forecast is in flight, so nothing shifts the layout -->
                     <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                               FontSize="13" HorizontalAlignment="Center" TextWrapping="Wrap"
+                               FontSize="13" HorizontalAlignment="Left" TextWrapping="Wrap"
                                Foreground="#FFFFB3AB" />
                 </StackPanel>
 
@@ -159,19 +170,33 @@
             </Grid>
         </ScrollViewer>
 
-        <!-- page-wide location carousel arrows -->
+        <!-- page-wide location carousel arrows: backplate only appears on hover/press -->
         <Button Content="&#xE76B;" FontFamily="Segoe Fluent Icons" FontSize="15"
                 HorizontalAlignment="Left" VerticalAlignment="Center" Margin="14,0,0,0"
-                Width="40" Height="40" CornerRadius="20" Background="#33000000" BorderThickness="0"
+                Width="40" Height="40" CornerRadius="20" Background="Transparent" BorderThickness="0"
                 Foreground="{StaticResource TextPrimary}"
                 ToolTipService.ToolTip="Previous city"
-                Command="{x:Bind ViewModel.PreviousLocationCommand}" />
+                Command="{x:Bind ViewModel.PreviousLocationCommand}">
+            <Button.Resources>
+                <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#2EFFFFFF" />
+                <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#45FFFFFF" />
+                <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="White" />
+                <SolidColorBrush x:Key="ButtonForegroundPressed" Color="White" />
+            </Button.Resources>
+        </Button>
         <Button Content="&#xE76C;" FontFamily="Segoe Fluent Icons" FontSize="15"
                 HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,14,0"
-                Width="40" Height="40" CornerRadius="20" Background="#33000000" BorderThickness="0"
+                Width="40" Height="40" CornerRadius="20" Background="Transparent" BorderThickness="0"
                 Foreground="{StaticResource TextPrimary}"
                 ToolTipService.ToolTip="Next city"
-                Command="{x:Bind ViewModel.NextLocationCommand}" />
+                Command="{x:Bind ViewModel.NextLocationCommand}">
+            <Button.Resources>
+                <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#2EFFFFFF" />
+                <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#45FFFFFF" />
+                <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="White" />
+                <SolidColorBrush x:Key="ButtonForegroundPressed" Color="White" />
+            </Button.Resources>
+        </Button>
 
         <!-- tall custom title bar: drag strip behind, interactive controls on top -->
         <Grid Height="48" VerticalAlignment="Top">

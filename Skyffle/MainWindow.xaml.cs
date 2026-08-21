@@ -82,24 +82,48 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
             Math.Max(1040, (int)(MinWidthEpx * startScale)),
             Math.Max(1200, (int)(MinHeightEpx * startScale))));
 
-        ViewModel.WeatherApplied += (code, isDay, cloudCover, windKmh) =>
+        // ambient loading: dim the content column while a forecast is in flight
+        // (no spinner, so nothing shifts the layout)
+        ViewModel.PropertyChanged += (_, e) =>
         {
-            // debug hook: SKYFFLE_FORCE_WMO=<code> [SKYFFLE_FORCE_NIGHT=1] previews any condition
+            if (e.PropertyName == nameof(MainViewModel.IsLoading))
+            {
+                AnimateContentOpacity(ViewModel.IsLoading ? 0.45 : 1.0);
+            }
+        };
+
+        ViewModel.WeatherApplied += c =>
+        {
+            // debug hooks: SKYFFLE_FORCE_WMO=<code> [SKYFFLE_FORCE_NIGHT=1] previews any
+            // condition; SKYFFLE_FORCE_SUN / SKYFFLE_FORCE_MOONPOS pin the sun/moon on
+            // their arcs (0..1); SKYFFLE_FORCE_MOON=0..1 pins the phase (0 new, 0.5 full)
             if (int.TryParse(Environment.GetEnvironmentVariable("SKYFFLE_FORCE_WMO"), out int forced))
             {
-                code = forced;
-                isDay = Environment.GetEnvironmentVariable("SKYFFLE_FORCE_NIGHT") != "1";
-                cloudCover = 80;
+                c = c with
+                {
+                    WmoCode = forced,
+                    IsDay = Environment.GetEnvironmentVariable("SKYFFLE_FORCE_NIGHT") != "1",
+                    CloudCoverPercent = 80,
+                };
             }
-            sky.ApplyWeather(code, isDay, cloudCover, windKmh);
+            if (TryEnvDouble("SKYFFLE_FORCE_SUN", out double s)) c = c with { SunProgress01 = s };
+            if (TryEnvDouble("SKYFFLE_FORCE_MOONPOS", out double mp)) c = c with { MoonProgress01 = mp };
+            if (TryEnvDouble("SKYFFLE_FORCE_MOON", out double ph)) c = c with { MoonPhase01 = ph };
+            sky.ApplyWeather(c);
             // late/cleared frames present ClearColor; keep it near what the shader
             // will draw so neither day nor night ever flashes the wrong brightness
-            SkyCanvas.ClearColor = isDay
+            SkyCanvas.ClearColor = c.IsDay
                 ? Windows.UI.Color.FromArgb(0xFF, 0x41, 0x61, 0x8E)
                 : Windows.UI.Color.FromArgb(0xFF, 0x0A, 0x12, 0x26);
         };
 
-        Closed += (_, _) => SkyCanvas.RemoveFromVisualTree();
+        Closed += (_, _) =>
+        {
+            // layout/scroll events can still fire during teardown; touching
+            // Window.Content after close throws COMException (window closed)
+            windowClosed = true;
+            SkyCanvas.RemoveFromVisualTree();
+        };
         // don't burn a full GPU frame budget on a sky nobody can see
         VisibilityChanged += (_, e) => SkyCanvas.Paused = !e.Visible;
 
@@ -128,6 +152,28 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
     }
 
     private bool xamlRootHooked;
+    private bool windowClosed;
+
+    private void AnimateContentOpacity(double to)
+    {
+        if (windowClosed) return;
+        var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            To = to,
+            Duration = new Microsoft.UI.Xaml.Duration(TimeSpan.FromMilliseconds(250)),
+            EasingFunction = new Microsoft.UI.Xaml.Media.Animation.QuadraticEase(),
+        };
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, ContentScroller);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "Opacity");
+        var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        sb.Children.Add(anim);
+        sb.Begin();
+    }
+
+    private static bool TryEnvDouble(string name, out double value) =>
+        double.TryParse(Environment.GetEnvironmentVariable(name),
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out value);
 
     // Longest render-target edge the sky is allowed; larger surfaces (maximized on
     // high-DPI) pushed frame time past vsync on this GPU and the animation flickered.
@@ -136,6 +182,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
     /// <summary>Renders the sky at reduced resolution on large surfaces and lets the swap chain scale it up.</summary>
     private void UpdateRenderScale()
     {
+        if (windowClosed) return; // Window.Content throws once the window is closed
         double rs = Content?.XamlRoot?.RasterizationScale ?? 1.0;
         double longest = Math.Max(SkyCanvas.ActualWidth, SkyCanvas.ActualHeight) * rs;
         float target = longest > MaxRenderEdge ? (float)(MaxRenderEdge / longest) : 1f;
@@ -148,6 +195,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
 
     private void UpdateCardRects()
     {
+        if (windowClosed) return; // Window.Content throws once the window is closed
         if (Content is not Microsoft.UI.Xaml.UIElement root || Content.XamlRoot is null) return;
         // canvas DPI, not RasterizationScale: it tracks DpiScale so rects stay in render-target pixels
         float scale = SkyCanvas.Dpi / 96f;
@@ -245,6 +293,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         skyEffect.ConstantBuffer = new SkyShader(
             t, res,
             sky.Daylight, sky.Cloud, sky.Rain, sky.Snow, sky.Fog, sky.Lightning, sky.Wind,
+            sky.SunProgress, sky.MoonProgress, sky.MoonPhase,
             scale,
             sky.CardA, sky.CardB, sky.CardC, sky.CardD,
             sky.DetailsGrid, sky.DetailsMeta);

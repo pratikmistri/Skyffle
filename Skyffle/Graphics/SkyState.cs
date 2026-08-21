@@ -2,6 +2,14 @@ using ComputeSharp;
 
 namespace Skyffle.Graphics;
 
+/// <summary>Everything the sky shader needs about the applied forecast.</summary>
+/// <param name="SunProgress01">0 at sunrise → 1 at sunset along the day arc.</param>
+/// <param name="MoonProgress01">0 at sunset → 1 at the next sunrise along the night arc.</param>
+/// <param name="MoonPhase01">Synodic phase: 0 new → 0.5 full → 1 new again.</param>
+public readonly record struct SkyConditions(
+    int WmoCode, bool IsDay, double CloudCoverPercent, double WindKmh,
+    double SunProgress01, double MoonProgress01, double MoonPhase01);
+
 /// <summary>
 /// CPU-side driver for <see cref="SkyShader"/>: maps WMO weather codes to shader
 /// parameters and eases the live values toward them so condition changes cross-fade.
@@ -19,6 +27,8 @@ public sealed class SkyState
     public float TargetSnow;
     public float TargetFog;
     public float TargetWind;
+    public float TargetSunProgress = 0.5f;  // 0 sunrise → 1 sunset
+    public float TargetMoonProgress = 0.5f; // 0 sunset → 1 next sunrise
     public bool Storm;
 
     // UI card rectangles (scene pixels) rain lands on; written from the UI thread
@@ -37,18 +47,24 @@ public sealed class SkyState
     public float Fog;
     public float Wind;
     public float Lightning;
+    public float SunProgress = 0.5f;
+    public float MoonProgress = 0.5f;
+    public float MoonPhase = 0.5f; // not eased: it moves ~3% a day, a jump is invisible
 
-    public void ApplyWeather(int wmoCode, bool isDay, double cloudCoverPercent, double windKmh)
+    public void ApplyWeather(in SkyConditions c)
     {
-        TargetDaylight = isDay ? 1f : 0f;
-        TargetCloud = (float)(cloudCoverPercent / 100.0);
-        TargetWind = (float)Math.Clamp(windKmh / 60.0, 0, 1);
+        TargetDaylight = c.IsDay ? 1f : 0f;
+        TargetSunProgress = (float)Math.Clamp(c.SunProgress01, 0.0, 1.0);
+        TargetMoonProgress = (float)Math.Clamp(c.MoonProgress01, 0.0, 1.0);
+        MoonPhase = (float)Math.Clamp(c.MoonPhase01, 0.0, 1.0);
+        TargetCloud = (float)(c.CloudCoverPercent / 100.0);
+        TargetWind = (float)Math.Clamp(c.WindKmh / 60.0, 0, 1);
         TargetRain = 0f;
         TargetSnow = 0f;
         TargetFog = 0f;
         Storm = false;
 
-        switch (wmoCode)
+        switch (c.WmoCode)
         {
             case 0: TargetCloud = Math.Min(TargetCloud, 0.05f); break;
             case 1: TargetCloud = Math.Max(TargetCloud, 0.15f); break;
@@ -81,6 +97,8 @@ public sealed class SkyState
         Snow += (TargetSnow - Snow) * k;
         Fog += (TargetFog - Fog) * k;
         Wind += (TargetWind - Wind) * k;
+        SunProgress += (TargetSunProgress - SunProgress) * k;
+        MoonProgress += (TargetMoonProgress - MoonProgress) * k;
 
         // lightning: random double-flicker bursts during storms, exponential decay
         Lightning *= (float)Math.Exp(-dt * 9.0);

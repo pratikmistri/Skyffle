@@ -22,6 +22,9 @@ public readonly partial struct SkyShader : ID2D1PixelShader
     private readonly float fog;        // fog density 0..1
     private readonly float lightning;  // instantaneous flash brightness 0..1
     private readonly float wind;       // -1..1, slants precipitation
+    private readonly float sunProgress;  // 0 sunrise → 1 sunset along the day arc
+    private readonly float moonProgress; // 0 sunset → 1 next sunrise along the night arc
+    private readonly float moonPhase;    // synodic: 0 new → 0.5 full → 1 new
     private readonly float pxScale;    // render pixels per effective pixel; keeps precipitation the same size at any window size
     private readonly float4 cardA;     // UI surfaces rain can land on: x, y, w, h in scene pixels
     private readonly float4 cardB;
@@ -32,6 +35,7 @@ public readonly partial struct SkyShader : ID2D1PixelShader
 
     public SkyShader(float time, float2 resolution, float daylight, float cloud,
                      float rain, float snow, float fog, float lightning, float wind,
+                     float sunProgress, float moonProgress, float moonPhase,
                      float pxScale,
                      float4 cardA, float4 cardB, float4 cardC, float4 cardD,
                      float4 detailsGrid, float4 detailsMeta)
@@ -45,6 +49,9 @@ public readonly partial struct SkyShader : ID2D1PixelShader
         this.fog = fog;
         this.lightning = lightning;
         this.wind = wind;
+        this.sunProgress = sunProgress;
+        this.moonProgress = moonProgress;
+        this.moonPhase = moonPhase;
         this.pxScale = pxScale;
         this.cardA = cardA;
         this.cardB = cardB;
@@ -167,64 +174,124 @@ public readonly partial struct SkyShader : ID2D1PixelShader
         float2 pp = pos / this.pxScale;                          // effective pixels: constant physical size at any window size
         float t = this.time;
 
+        // ----- sun geometry: the hourly card's top edge is the horizon line -----
+        float clearSky = 1.0f - this.cloud;
+        float horizonY = Hlsl.Clamp(
+            this.cardA.W >= 1.0f ? this.cardA.Y / this.resolution.Y : 0.62f, 0.30f, 0.92f);
+        float sp = Hlsl.Clamp(this.sunProgress, 0.0f, 1.0f);
+        float alt = Hlsl.Sin(sp * 3.14159f);                     // 0 at the horizon, 1 at noon
+        float lowSun = 1.0f - Hlsl.SmoothStep(0.12f, 0.45f, alt); // 1 near sunrise/sunset
+
         // ----- base sky gradient -----
         float3 dayTop = Hlsl.Lerp(new float3(0.13f, 0.38f, 0.78f), new float3(0.33f, 0.38f, 0.46f), this.cloud);
         float3 dayBot = Hlsl.Lerp(new float3(0.55f, 0.74f, 0.94f), new float3(0.56f, 0.59f, 0.64f), this.cloud);
         float3 nightTop = Hlsl.Lerp(new float3(0.010f, 0.020f, 0.060f), new float3(0.030f, 0.035f, 0.055f), this.cloud);
         float3 nightBot = Hlsl.Lerp(new float3(0.060f, 0.100f, 0.200f), new float3(0.070f, 0.080f, 0.110f), this.cloud);
 
-        // golden-hour warmth when daylight is between night and day
-        float dusk = Hlsl.SmoothStep(0.0f, 0.5f, this.daylight) * (1.0f - Hlsl.SmoothStep(0.5f, 1.0f, this.daylight));
+        // golden-hour warmth: when the sun rides low in daytime, or during the day/night cross-fade
+        float fade = Hlsl.SmoothStep(0.0f, 0.5f, this.daylight) * (1.0f - Hlsl.SmoothStep(0.5f, 1.0f, this.daylight));
+        float dusk = Hlsl.Max(fade, lowSun * Hlsl.SmoothStep(0.15f, 0.6f, this.daylight));
         float3 top = Hlsl.Lerp(nightTop, dayTop, this.daylight);
         float3 bot = Hlsl.Lerp(nightBot, dayBot, this.daylight);
         bot = Hlsl.Lerp(bot, new float3(0.85f, 0.48f, 0.30f), dusk * (1.0f - this.cloud) * 0.55f);
 
         float3 col = Hlsl.Lerp(top, bot, Hlsl.Pow(Hlsl.Max(uv.Y, 0.0f), 1.25f));
 
-        // ----- sun -----
-        float2 sunPos = new(ar.X * 0.72f, 0.20f);
-        float sunD = Hlsl.Length(p - sunPos);
-        float clearSky = 1.0f - this.cloud;
+        // ----- sun: rides the sunrise→sunset arc over the card horizon -----
+        float2 sunPos = new(ar.X * Hlsl.Lerp(0.10f, 0.90f, sp), horizonY - alt * (horizonY - 0.13f));
+        // atmospheric refraction: heat-haze wobble of the disc, strongest near the
+        // horizon and only in clear sky where the disc is sharp enough to show it
+        float2 shimmer = new(
+            Noise(p * 26.0f + new float2(t * 1.9f, 0.0f)) - 0.5f,
+            Noise(p * 26.0f + new float2(7.3f, t * 2.3f)) - 0.5f);
+        float shimmerAmp = clearSky * this.daylight * (0.006f + 0.016f * lowSun);
+        float sunD = Hlsl.Length(p + shimmer * shimmerAmp - sunPos);
         float sunCore = Hlsl.SmoothStep(0.055f, 0.035f, sunD);
-        float sunGlow = Hlsl.Exp(-sunD * 5.5f) * 0.45f + Hlsl.Exp(-sunD * 14.0f) * 0.40f;
-        float3 sunCol = Hlsl.Lerp(new float3(1.0f, 0.55f, 0.25f), new float3(1.0f, 0.92f, 0.72f), Hlsl.SmoothStep(0.3f, 0.8f, this.daylight));
-        col += sunCol * (sunCore * 1.2f + sunGlow) * this.daylight * (0.04f + 0.96f * clearSky);
+        float glowBoost = 1.0f + lowSun * 0.8f; // fatter, hazier glow when low
+        float sunGlow = (Hlsl.Exp(-sunD * 5.5f) * 0.45f + Hlsl.Exp(-sunD * 14.0f) * 0.40f) * glowBoost;
+        // deep orange skimming the horizon, pale gold overhead
+        float3 sunCol = Hlsl.Lerp(new float3(1.00f, 0.92f, 0.72f), new float3(1.00f, 0.45f, 0.15f), lowSun);
+        // the card is the horizon: the disc slips behind it as it sets
+        float aboveHorizon = Hlsl.SmoothStep(horizonY + 0.045f, horizonY - 0.005f, uv.Y);
+        col += sunCol * (sunCore * 1.2f + sunGlow) * aboveHorizon * this.daylight * (0.04f + 0.96f * clearSky);
 
         // ----- moon + stars -----
         float night = 1.0f - this.daylight;
         if (night > 0.01f)
         {
-            float2 moonPos = new(ar.X * 0.30f, 0.16f);
-            float moonD = Hlsl.Length(p - moonPos);
-            float moon = Hlsl.SmoothStep(0.045f, 0.040f, moonD);
-            float crater = Hlsl.SmoothStep(0.045f, 0.040f, Hlsl.Length(p - moonPos - new float2(0.016f, -0.006f)));
-            float moonGlow = Hlsl.Exp(-moonD * 9.0f) * 0.35f;
-            col += (new float3(0.92f, 0.94f, 1.00f) * Hlsl.Saturate(moon - crater * 0.85f) + new float3(0.55f, 0.62f, 0.85f) * moonGlow)
-                   * night * clearSky;
+            // the moon rides the same card-horizon arc as the sun, across the night
+            float mp = Hlsl.Clamp(this.moonProgress, 0.0f, 1.0f);
+            float malt = Hlsl.Sin(mp * 3.14159f);
+            float2 moonPos = new(ar.X * Hlsl.Lerp(0.10f, 0.90f, mp), horizonY - malt * (horizonY - 0.13f));
+            float moonR = 0.045f;
+            float2 md = p - moonPos;
+            float moonD = Hlsl.Length(md);
+            float disc = Hlsl.SmoothStep(moonR, moonR - 0.005f, moonD);
 
-            // star field: sparse hash sprinkle, twinkling (epx so size/density hold at any DPI)
-            float2 cell = Hlsl.Floor(pp / 3.0f);
-            float h = Hash21(cell);
-            float star = Hlsl.SmoothStep(0.997f, 1.0f, h);
-            float twinkle = 0.55f + 0.45f * Hlsl.Sin(t * 2.2f + h * 251.0f);
-            col += new float3(0.9f, 0.93f, 1.0f) * star * twinkle * night * clearSky * (1.0f - uv.Y) * 0.9f;
+            // sphere-lit phase: light direction swings with the synodic cycle, so a
+            // waxing moon lights its right limb and a waning moon its left. The
+            // lighting axis is tilted ~25° (as seen at mid-latitudes) and the surface
+            // shades with a Lambert term, so the terminator rolls off like a sphere
+            // instead of splitting the disc in two.
+            float2 nrm = md / moonR;
+            float2 rn = new(nrm.X * 0.906f - nrm.Y * 0.423f,   // rotate into the tilted frame
+                            nrm.X * 0.423f + nrm.Y * 0.906f);
+            float nz = Hlsl.Sqrt(Hlsl.Max(0.0f, 1.0f - Hlsl.Dot(nrm, nrm)));
+            float ang = this.moonPhase * 6.28318f;
+            float lam = Hlsl.Saturate(rn.X * Hlsl.Sin(ang) - nz * Hlsl.Cos(ang)); // N·L
+            float shade = Hlsl.Pow(lam, 0.65f);           // gentle roll-off near the terminator
+            float limb = 0.55f + 0.45f * nz;              // limb darkening rounds the disc
+            float maria = 0.82f + 0.18f * Noise(nrm * 3.1f + 5.0f); // faint mottling
+            float fullness = 0.5f - 0.5f * Hlsl.Cos(ang); // glow tracks the lit fraction
+            float moonGlow = Hlsl.Exp(-moonD * 9.0f) * (0.12f + 0.28f * fullness);
+            col += (new float3(0.92f, 0.94f, 1.00f) * disc * (shade * limb * maria * 0.95f + 0.05f)
+                    + new float3(0.55f, 0.62f, 0.85f) * moonGlow)
+                   * night * clearSky * aboveHorizon;
+
+            // star field: jittered round points (epx so size/density hold at any DPI),
+            // each with its own size, brightness, and twinkle rate/phase so the sky
+            // shimmers instead of blinking in unison
+            float2 sc = pp / 9.0f;
+            float hs = Hash21(Hlsl.Floor(sc));
+            float2 sj = new(Hlsl.Frac(hs * 17.7f), Hlsl.Frac(hs * 43.3f));
+            float sd = Hlsl.Length((Hlsl.Frac(sc) - (0.2f + sj * 0.6f)) * 9.0f); // epx from star center
+            float srad = 0.7f + Hlsl.Frac(hs * 7.9f) * 0.9f;
+            float star = Hlsl.SmoothStep(srad, srad * 0.3f, sd) * Hlsl.Step(0.96f, hs);
+            float twinkle = 0.65f + 0.35f * Hlsl.Sin(t * (1.2f + Hlsl.Frac(hs * 5.3f) * 2.8f) + hs * 251.0f);
+            float sbright = 0.35f + 0.65f * Hlsl.Frac(hs * 9.1f);
+            col += new float3(0.9f, 0.93f, 1.0f) * star * twinkle * sbright * night * clearSky * (1.0f - uv.Y) * 0.9f;
         }
 
-        // ----- clouds (two drifting fbm layers) -----
+        // ----- clouds (layered decks: broad back layer + faster front smoke) -----
         if (this.cloud > 0.01f)
         {
             float cover = this.cloud;
             float f1 = Fbm(p * 2.6f + new float2(t * 0.020f, 0.0f));
             float f2 = Fbm(p * 4.9f + new float2(t * 0.045f, 3.7f));
-            float shape = f1 * 0.65f + f2 * 0.35f;
-            float dens = Hlsl.SmoothStep(0.95f - cover * 0.75f, 1.05f - cover * 0.45f, shape);
-            dens *= Hlsl.SmoothStep(0.0f, 0.35f, uv.Y) * 0.9f + 0.1f;   // thinner at zenith
+            float heightFade = Hlsl.SmoothStep(0.0f, 0.35f, uv.Y) * 0.9f + 0.1f; // thinner at zenith
+
+            float back = Hlsl.SmoothStep(0.95f - cover * 0.75f, 1.05f - cover * 0.45f, f1 * 0.65f + f2 * 0.35f);
+            // front deck drifts faster and breaks into finer wisps
+            float f3 = Fbm(p * 3.8f + new float2(t * 0.060f, 9.1f));
+            float front = Hlsl.SmoothStep(1.02f - cover * 0.62f, 1.10f - cover * 0.34f, f3);
+
+            float storminess = Hlsl.Saturate(this.rain * 1.2f);
             float3 cloudDay = Hlsl.Lerp(new float3(0.98f, 0.98f, 1.00f), new float3(0.62f, 0.64f, 0.70f), cover * 0.8f);
-            float3 cloudNight = new(0.10f, 0.11f, 0.15f);
-            float3 cloudCol = Hlsl.Lerp(cloudNight, cloudDay, this.daylight);
-            // storm clouds darken further with rain
-            cloudCol = Hlsl.Lerp(cloudCol, cloudCol * 0.55f, Hlsl.Saturate(this.rain * 1.2f));
-            col = Hlsl.Lerp(col, cloudCol, Hlsl.Saturate(dens));
+            // night decks keep enough luminance that rainy-night smoke stays readable
+            float3 backCol = Hlsl.Lerp(new float3(0.11f, 0.12f, 0.17f), cloudDay * 0.88f, this.daylight);
+            float3 frontCol = Hlsl.Lerp(new float3(0.18f, 0.20f, 0.27f), cloudDay, this.daylight);
+            // storms mute the decks, but far less at night — they are already dark
+            float darken = Hlsl.Lerp(0.18f, 0.45f, this.daylight) * storminess;
+            backCol *= 1.0f - darken;
+            frontCol *= 1.0f - darken;
+
+            col = Hlsl.Lerp(col, backCol, Hlsl.Saturate(back * heightFade));
+            col = Hlsl.Lerp(col, frontCol, Hlsl.Saturate(front * heightFade * 0.85f));
+
+            // faint rim light where the front wisps thin out, so the layers separate
+            float rim = Hlsl.Saturate(front * (1.0f - front) * 4.0f);
+            float3 rimCol = Hlsl.Lerp(new float3(0.30f, 0.34f, 0.46f), new float3(1.00f, 0.97f, 0.90f), this.daylight);
+            col += rimCol * rim * heightFade * (0.05f + 0.07f * this.daylight);
         }
 
         // ----- rain (three parallax layers of streaks) -----
