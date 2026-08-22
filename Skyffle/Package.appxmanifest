@@ -48,5 +48,10 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+
+    <!-- The "Your location" entry: in a packaged build Geolocator.RequestAccessAsync
+         is denied without this, and GeoLocationService swallows the refusal, so the
+         feature goes quietly missing rather than failing loudly. -->
+    <DeviceCapability Name="location" />
   </Capabilities>
 </Package>
