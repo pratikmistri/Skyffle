@@ -103,12 +103,7 @@
                 <!-- 10-day forecast -->
                 <Border x:Name="DailyCard" Grid.Row="3" Style="{StaticResource GlassCard}" Margin="0,0,0,14">
                     <StackPanel>
-                        <Grid>
-                            <TextBlock Text="10-DAY FORECAST" Style="{StaticResource CardHeader}" />
-                            <TextBlock Text="select a day for its hourly curve" FontSize="11"
-                                       HorizontalAlignment="Right" Margin="0,0,2,8"
-                                       Foreground="{StaticResource TextTertiary}" />
-                        </Grid>
+                        <TextBlock Text="10-DAY FORECAST" Style="{StaticResource CardHeader}" />
                         <!-- rows below an expanding day slide down rather than jump -->
                         <ItemsControl ItemsSource="{x:Bind ViewModel.Days}">
                             <ItemsControl.ItemContainerTransitions>
