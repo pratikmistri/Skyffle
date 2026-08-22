@@ -130,6 +130,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         VisibilityChanged += (_, e) => SkyCanvas.Paused = !e.Visible;
 
         AttachHeroContrast();
+        CentrePlaceholder();
 
         // keep the shader's picture of the UI surfaces fresh so rain lands on them
         if (Content is Microsoft.UI.Xaml.FrameworkElement root)
@@ -187,6 +188,39 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         contrastTimer.Tick += (_, _) => UpdateHeroContrast();
         contrastTimer.Start();
         Closed += (_, _) => contrastTimer.Stop();
+    }
+
+    /// <summary>
+    /// Centres the search field's placeholder. TextAlignment centres what the user
+    /// types, but the ghost text lives in a separate presenter inside the TextBox
+    /// template that ignores it, so reach in once the template is realised.
+    /// </summary>
+    private void CentrePlaceholder()
+    {
+        SearchBox.Loaded += (_, _) =>
+        {
+            if (FindDescendant(SearchBox, "PlaceholderTextContentPresenter") is ContentControl ghost)
+            {
+                ghost.HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch;
+                ghost.HorizontalContentAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center;
+                // centred text puts the caret mid-word in the ghost, so drop the
+                // ghost while the field has focus and the caret is showing
+                SearchBox.GotFocus += (_, _) => ghost.Opacity = 0;
+                SearchBox.LostFocus += (_, _) => ghost.Opacity = 1;
+            }
+        };
+    }
+
+    private static Microsoft.UI.Xaml.FrameworkElement? FindDescendant(Microsoft.UI.Xaml.DependencyObject root, string name)
+    {
+        int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is Microsoft.UI.Xaml.FrameworkElement fe && fe.Name == name) return fe;
+            if (FindDescendant(child, name) is { } hit) return hit;
+        }
+        return null;
     }
 
     /// <summary>Eases the hero ink toward its target each tick (10 Hz, ~0.4 s settle).</summary>

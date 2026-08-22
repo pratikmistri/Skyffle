@@ -212,15 +212,38 @@
                 Width="340"
                 CornerRadius="20"
                 HorizontalAlignment="Center" VerticalAlignment="Center"
-                PlaceholderText="Search for a city…"
-                QueryIcon="Find"
+                PlaceholderText="Search"
                 TextChanged="OnSearchTextChanged"
                 SuggestionChosen="OnSuggestionChosen"
                 ItemsSource="{x:Bind ViewModel.Suggestions}">
+                <!-- glass pill: the only thing that changes across rest/hover/focus is
+                     how much light the plate holds. No border, so nothing draws an
+                     underline, and no opaque backplate stealing the sky on focus -->
+                <AutoSuggestBox.Resources>
+                    <SolidColorBrush x:Key="TextControlBackground" Color="#1FFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#33FFFFFF" />
+                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#4DFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#14FFFFFF" />
+                    <Thickness x:Key="TextControlBorderThemeThickness">0</Thickness>
+                    <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
+                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
+                    <SolidColorBrush x:Key="TextControlForeground" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#B8FFFFFF" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#D6FFFFFF" />
+                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#8AFFFFFF" />
+                    <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="#66FFFFFF" />
+                </AutoSuggestBox.Resources>
                 <AutoSuggestBox.TextBoxStyle>
                     <Style TargetType="TextBox" BasedOn="{StaticResource AutoSuggestBoxTextBoxStyle}">
                         <Setter Property="CornerRadius" Value="20" />
-                        <Setter Property="Padding" Value="16,8,12,10" />
+                        <Setter Property="Padding" Value="16,8,16,10" />
+                        <Setter Property="TextAlignment" Value="Center" />
+                        <Setter Property="HorizontalContentAlignment" Value="Center" />
                     </Style>
                 </AutoSuggestBox.TextBoxStyle>
                 <AutoSuggestBox.ItemTemplate>
