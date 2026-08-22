@@ -23,6 +23,19 @@
                 <Setter Property="Padding" Value="16" />
             </Style>
 
+            <!-- A day row in the 10-day list: a full-width disclosure button that shows
+                 nothing but a faint plate on hover, so the list still reads as a list -->
+            <Style x:Key="DayRowButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="8,0" />
+                <Setter Property="Margin" Value="-8,0,-8,0" />
+                <Setter Property="CornerRadius" Value="10" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+            </Style>
+
             <Style x:Key="CardHeader" TargetType="TextBlock">
                 <Setter Property="FontSize" Value="12" />
                 <Setter Property="FontWeight" Value="SemiBold" />

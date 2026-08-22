@@ -435,6 +435,21 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         e.Handled = true;
     }
 
+    private void OnDayRowClick(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (sender is not Microsoft.UI.Xaml.FrameworkElement { DataContext: DayItem day } row) return;
+        ViewModel.ToggleDay(day);
+        if (!day.IsExpanded) return;
+        // the chart adds a few hundred pixels mid-page, and the scroll viewer's own
+        // anchoring can carry the viewport away from the row that was clicked; lay the
+        // new height out, then scroll the row and its chart back under the pointer
+        if (row.Parent is Microsoft.UI.Xaml.FrameworkElement group)
+        {
+            group.UpdateLayout();
+            group.StartBringIntoView(new Microsoft.UI.Xaml.BringIntoViewOptions { AnimationDesired = true });
+        }
+    }
+
     private void OnSuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
     {
         if (args.SelectedItem is Models.GeoResult geo)

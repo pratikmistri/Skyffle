@@ -16,9 +16,23 @@ public sealed class HourItem
     public bool HasPrecip => PrecipProb.Length > 0;
 }
 
-public sealed class DayItem
+/// <summary>One hour of a day's curve: the numbers the chart plots, and the strings it reads out on hover.</summary>
+public sealed class HourPoint
+{
+    public DateTime Time { get; init; }
+    public double Temp { get; init; }
+    public double? PrecipProbability { get; init; }
+    public string Glyph { get; init; } = "";
+    public string Description { get; init; } = "";
+    /// <summary>The hour in progress — true on today's row only; the chart marks it on the curve.</summary>
+    public bool IsNow { get; init; }
+}
+
+public sealed partial class DayItem : ObservableObject
 {
     public string DayLabel { get; init; } = "";
+    public string DateLabel { get; init; } = "";
+    public string Summary { get; init; } = "";
     public string Glyph { get; init; } = "";
     public string MinLabel { get; init; } = "";
     public string MaxLabel { get; init; } = "";
@@ -28,6 +42,17 @@ public sealed class DayItem
     public double BarOffset { get; init; }
     public double BarWidth { get; init; }
     public Microsoft.UI.Xaml.Thickness BarMargin => new(BarOffset, 0, 0, 0);
+
+    /// <summary>This day's hours, plotted by the chart while the row is expanded.</summary>
+    public IReadOnlyList<HourPoint> Hours { get; init; } = [];
+    public bool HasHours => Hours.Count > 1;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ExpandGlyph))]
+    private bool isExpanded;
+
+    /// <summary>Chevron down when closed, up when open.</summary>
+    public string ExpandGlyph => IsExpanded ? "" : "";
 }
 
 public sealed class DetailItem
@@ -221,15 +246,16 @@ public partial class MainViewModel : ObservableObject
         Condition = Wmo.Describe(cur.WeatherCode);
         FeelsLikeShort = $"Feels like {Math.Round(cur.FeelsLike)}°";
 
+        // cur.Time is a 15-minute step (e.g. 14:30); truncate to the hour so the
+        // in-progress hour (14:00) is the "Now" slot, matching the hero reading
+        var nowLocal = DateTime.Parse(cur.Time!, CultureInfo.InvariantCulture);
+        var nowHour = new DateTime(nowLocal.Year, nowLocal.Month, nowLocal.Day, nowLocal.Hour, 0, 0);
+
         // ----- hourly: next 24 from now -----
         Hours.Clear();
         var hourly = fc.Hourly;
         if (hourly is not null && hourly.Time.Count > 0)
         {
-            // cur.Time is a 15-minute step (e.g. 14:30); truncate to the hour so the
-            // in-progress hour (14:00) is the "Now" slot, matching the hero reading
-            var nowLocal = DateTime.Parse(cur.Time!, CultureInfo.InvariantCulture);
-            var nowHour = new DateTime(nowLocal.Year, nowLocal.Month, nowLocal.Day, nowLocal.Hour, 0, 0);
             int start = 0;
             for (int i = 0; i < hourly.Time.Count; i++)
             {
@@ -252,9 +278,10 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        // ----- 10-day with range bars -----
+        // ----- 10-day with range bars, each row expandable into its own hourly curve -----
         Days.Clear();
         HiLo = ""; // reset so a daily-less response doesn't show the previous city's H/L
+        var curves = BuildDayCurves(hourly, nowHour);
         var daily = fc.Daily;
         // parallel arrays are deserialized independently; bound by every list we index
         int dayCount = daily is null ? 0 :
@@ -271,15 +298,20 @@ public partial class MainViewModel : ObservableObject
             {
                 var d = DateTime.Parse(daily.Time[i], CultureInfo.InvariantCulture);
                 double? pp = i < daily.PrecipProbabilityMax.Count ? daily.PrecipProbabilityMax[i] : null;
+                string summary = Wmo.Describe(daily.WeatherCode[i]);
+                if (pp is > 15) summary += $" · {pp:0}% chance of precipitation";
                 Days.Add(new DayItem
                 {
                     DayLabel = i == 0 ? "Today" : d.ToString("ddd", CultureInfo.InvariantCulture),
+                    DateLabel = d.ToString("dddd, MMMM d", CultureInfo.InvariantCulture),
+                    Summary = summary,
                     Glyph = Wmo.Glyph(daily.WeatherCode[i], true),
                     MinLabel = $"{Math.Round(daily.TempMin[i])}°",
                     MaxLabel = $"{Math.Round(daily.TempMax[i])}°",
                     PrecipProb = pp is > 15 ? $"{pp:0}%" : "",
                     BarOffset = (daily.TempMin[i] - gMin) / span * BarTrack,
                     BarWidth = Math.Max(6, (daily.TempMax[i] - daily.TempMin[i]) / span * BarTrack),
+                    Hours = curves.TryGetValue(DateOnly.FromDateTime(d), out var curve) ? curve : [],
                 });
             }
         }
@@ -350,6 +382,49 @@ public partial class MainViewModel : ObservableObject
 
         WeatherApplied?.Invoke(new Graphics.SkyConditions(
             cur.WeatherCode, isDay, cur.CloudCover, cur.WindSpeed, sunProgress, moonProgress, moonPhase));
+    }
+
+    /// <summary>
+    /// Buckets the flat hourly arrays by calendar day so any row in the 10-day list can
+    /// plot its own 24-hour curve without another request — the forecast already carries
+    /// every hour of the ten days it returns.
+    /// </summary>
+    private static Dictionary<DateOnly, List<HourPoint>> BuildDayCurves(HourlyBlock? hourly, DateTime nowHour)
+    {
+        var curves = new Dictionary<DateOnly, List<HourPoint>>();
+        if (hourly is null) return curves;
+        // parallel arrays are deserialized independently; bound by every list we index
+        int count = Math.Min(Math.Min(hourly.Time.Count, hourly.Temperature.Count), hourly.WeatherCode.Count);
+        for (int i = 0; i < count; i++)
+        {
+            var t = DateTime.Parse(hourly.Time[i], CultureInfo.InvariantCulture);
+            var key = DateOnly.FromDateTime(t);
+            if (!curves.TryGetValue(key, out var list))
+            {
+                curves[key] = list = new List<HourPoint>(24);
+            }
+            list.Add(new HourPoint
+            {
+                Time = t,
+                Temp = hourly.Temperature[i],
+                PrecipProbability = i < hourly.PrecipProbability.Count ? hourly.PrecipProbability[i] : null,
+                Glyph = Wmo.Glyph(hourly.WeatherCode[i], i < hourly.IsDay.Count && hourly.IsDay[i] == 1),
+                Description = Wmo.Describe(hourly.WeatherCode[i]),
+                IsNow = t == nowHour,
+            });
+        }
+        return curves;
+    }
+
+    /// <summary>Accordion: opening one day's curve closes whichever was open.</summary>
+    public void ToggleDay(DayItem day)
+    {
+        bool opening = !day.IsExpanded && day.HasHours;
+        foreach (var d in Days)
+        {
+            d.IsExpanded = false;
+        }
+        day.IsExpanded = opening;
     }
 
     private static double? TryVisibility(ForecastResponse fc)

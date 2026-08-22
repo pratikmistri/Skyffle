@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
     xmlns:vm="using:Skyffle.ViewModels"
+    xmlns:ctl="using:Skyffle.Controls"
     xmlns:m="using:Skyffle.Models"
     Title="Skyffle">
 
@@ -102,43 +103,85 @@
                 <!-- 10-day forecast -->
                 <Border x:Name="DailyCard" Grid.Row="3" Style="{StaticResource GlassCard}" Margin="0,0,0,14">
                     <StackPanel>
-                        <TextBlock Text="10-DAY FORECAST" Style="{StaticResource CardHeader}" />
+                        <Grid>
+                            <TextBlock Text="10-DAY FORECAST" Style="{StaticResource CardHeader}" />
+                            <TextBlock Text="select a day for its hourly curve" FontSize="11"
+                                       HorizontalAlignment="Right" Margin="0,0,2,8"
+                                       Foreground="{StaticResource TextTertiary}" />
+                        </Grid>
+                        <!-- rows below an expanding day slide down rather than jump -->
                         <ItemsControl ItemsSource="{x:Bind ViewModel.Days}">
+                            <ItemsControl.ItemContainerTransitions>
+                                <TransitionCollection>
+                                    <RepositionThemeTransition />
+                                </TransitionCollection>
+                            </ItemsControl.ItemContainerTransitions>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:DayItem">
-                                    <Grid Padding="0,9" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="64" />
-                                            <ColumnDefinition Width="30" />
-                                            <ColumnDefinition Width="40" />
-                                            <ColumnDefinition Width="40" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="40" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Bind DayLabel}" FontSize="16"
-                                                   Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind Glyph}" FontSize="18" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="2" Text="{x:Bind PrecipProb}" FontSize="12"
-                                                   Foreground="#FF9CD2FF" VerticalAlignment="Center" Visibility="{x:Bind HasPrecip}" />
-                                        <TextBlock Grid.Column="3" Text="{x:Bind MinLabel}" FontSize="16"
-                                                   Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center"
-                                                   HorizontalAlignment="Right" />
-                                        <Grid Grid.Column="4" VerticalAlignment="Center" Width="140" HorizontalAlignment="Center">
-                                            <Border Height="5" CornerRadius="2.5" Background="#2E000000" />
-                                            <Border Height="5" CornerRadius="2.5" HorizontalAlignment="Left"
-                                                    Width="{x:Bind BarWidth}" Margin="{x:Bind BarMargin}">
-                                                <Border.Background>
-                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                                        <GradientStop Color="#FF6EC1FF" Offset="0" />
-                                                        <GradientStop Color="#FFFFD36E" Offset="1" />
-                                                    </LinearGradientBrush>
-                                                </Border.Background>
-                                            </Border>
-                                        </Grid>
-                                        <TextBlock Grid.Column="5" Text="{x:Bind MaxLabel}" FontSize="16" FontWeight="SemiBold"
-                                                   Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"
-                                                   HorizontalAlignment="Right" />
-                                    </Grid>
+                                    <StackPanel>
+                                        <!-- the whole row is the disclosure control -->
+                                        <Button Style="{StaticResource DayRowButton}" Click="OnDayRowClick"
+                                                ToolTipService.ToolTip="Show this day's hourly forecast">
+                                            <!-- the plate is the only thing hover/press change; the row keeps reading as a row -->
+                                            <Button.Resources>
+                                                <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#14FFFFFF" />
+                                                <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#26FFFFFF" />
+                                                <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="White" />
+                                                <SolidColorBrush x:Key="ButtonForegroundPressed" Color="White" />
+                                                <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+                                                <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
+                                            </Button.Resources>
+                                            <Grid Padding="0,9" ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="64" />
+                                                    <ColumnDefinition Width="30" />
+                                                    <ColumnDefinition Width="40" />
+                                                    <ColumnDefinition Width="40" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="40" />
+                                                    <ColumnDefinition Width="18" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{x:Bind DayLabel}" FontSize="16"
+                                                           Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1" Text="{x:Bind Glyph}" FontSize="18" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Text="{x:Bind PrecipProb}" FontSize="12"
+                                                           Foreground="#FF9CD2FF" VerticalAlignment="Center" Visibility="{x:Bind HasPrecip}" />
+                                                <TextBlock Grid.Column="3" Text="{x:Bind MinLabel}" FontSize="16"
+                                                           Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center"
+                                                           HorizontalAlignment="Right" />
+                                                <Grid Grid.Column="4" VerticalAlignment="Center" Width="140" HorizontalAlignment="Center">
+                                                    <Border Height="5" CornerRadius="2.5" Background="#2E000000" />
+                                                    <Border Height="5" CornerRadius="2.5" HorizontalAlignment="Left"
+                                                            Width="{x:Bind BarWidth}" Margin="{x:Bind BarMargin}">
+                                                        <Border.Background>
+                                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                                <GradientStop Color="#FF6EC1FF" Offset="0" />
+                                                                <GradientStop Color="#FFFFD36E" Offset="1" />
+                                                            </LinearGradientBrush>
+                                                        </Border.Background>
+                                                    </Border>
+                                                </Grid>
+                                                <TextBlock Grid.Column="5" Text="{x:Bind MaxLabel}" FontSize="16" FontWeight="SemiBold"
+                                                           Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"
+                                                           HorizontalAlignment="Right" />
+                                                <TextBlock Grid.Column="6" Text="{x:Bind ExpandGlyph, Mode=OneWay}"
+                                                           FontFamily="Segoe Fluent Icons" FontSize="11"
+                                                           Foreground="{StaticResource TextTertiary}"
+                                                           VerticalAlignment="Center" HorizontalAlignment="Right" />
+                                            </Grid>
+                                        </Button>
+
+                                        <!-- expanded detail: the chart hooks this panel's Visibility to
+                                             animate itself in, so it must be the chart's direct parent -->
+                                        <StackPanel Visibility="{x:Bind IsExpanded, Mode=OneWay}"
+                                                    Margin="6,2,6,16" Spacing="1">
+                                            <TextBlock Text="{x:Bind DateLabel}" FontSize="14" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource TextPrimary}" />
+                                            <TextBlock Text="{x:Bind Summary}" FontSize="12"
+                                                       Foreground="{StaticResource TextSecondary}" />
+                                            <ctl:HourlyChart Points="{x:Bind Hours}" Height="196" Margin="0,10,0,0" />
+                                        </StackPanel>
+                                    </StackPanel>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
