@@ -324,17 +324,18 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         sky.CardC = default;
         sky.CardD = default;
 
-        // detail cards are a uniform VariableSizedWrapGrid (120-tall cells, 4px item
-        // margin — keep in sync with MainWindow.xaml); the shader derives each
-        // card's rect from the grid so every card catches rain individually.
-        // Read-only here: the wrap grid's actual laid-out values are used so the
-        // shader never sees a column count the panel hasn't applied yet
+        // detail cards are a uniform VariableSizedWrapGrid (4px item margin — keep in
+        // sync with MainWindow.xaml); the shader derives each card's rect from the grid
+        // so every card catches rain individually.
+        // Read-only here: the wrap grid's actual laid-out values — cell height included,
+        // so a template resize can't leave the shader chasing a stale card height — are
+        // used so the shader never sees a column count the panel hasn't applied yet
         var panel = DetailsHost.ItemsPanelRoot;
         if (panel is VariableSizedWrapGrid wrap && panel.ActualWidth > 1
-            && wrap.ItemWidth > 0 && wrap.MaximumRowsOrColumns > 0 && ViewModel.Details.Count > 0)
+            && wrap.ItemWidth > 0 && wrap.ItemHeight > 0 && wrap.MaximumRowsOrColumns > 0 && ViewModel.Details.Count > 0)
         {
             var rect = GetRect(panel, root, scale);
-            sky.DetailsGrid = new float4(rect.X, rect.Y, (float)wrap.ItemWidth * scale, 120f * scale);
+            sky.DetailsGrid = new float4(rect.X, rect.Y, (float)wrap.ItemWidth * scale, (float)wrap.ItemHeight * scale);
             sky.DetailsMeta = new float4(wrap.MaximumRowsOrColumns, ViewModel.Details.Count, 4f * scale, 0);
         }
         else

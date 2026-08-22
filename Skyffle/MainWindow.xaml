@@ -195,20 +195,32 @@
                               ItemsSource="{x:Bind ViewModel.Details}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <VariableSizedWrapGrid Orientation="Horizontal" ItemWidth="174" ItemHeight="120"
+                            <VariableSizedWrapGrid Orientation="Horizontal" ItemWidth="174" ItemHeight="204"
                                                    HorizontalAlignment="Center" />
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:DetailItem">
-                            <Border Style="{StaticResource GlassCard}" Margin="4" Height="112">
-                                <StackPanel Spacing="4">
-                                    <TextBlock Text="{x:Bind Title}" Style="{StaticResource CardHeader}" Margin="0" />
-                                    <TextBlock Text="{x:Bind Value}" FontSize="26" FontWeight="SemiLight"
+                            <Border Style="{StaticResource GlassCard}" Margin="4" Height="196" Padding="16,12,16,12">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="{x:Bind Title}" Style="{StaticResource CardHeader}" Margin="0,0,0,4" />
+                                    <!-- gauge cards print the reading inside their own face; the rest
+                                         keep the plain number, vertically centred in the same slot -->
+                                    <ctl:ArcGauge Grid.Row="1" Spec="{x:Bind Gauge}" Value="{x:Bind Value}"
+                                                  Visibility="{x:Bind GaugeVisibility}"
+                                                  HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                                  MaxWidth="184" Height="120" />
+                                    <TextBlock Grid.Row="1" Text="{x:Bind Value}" FontSize="26" FontWeight="SemiLight"
+                                               Visibility="{x:Bind PlainVisibility}" VerticalAlignment="Center"
                                                Foreground="{StaticResource TextPrimary}" />
-                                    <TextBlock Text="{x:Bind Caption}" FontSize="12" TextWrapping="Wrap"
-                                               Foreground="{StaticResource TextSecondary}" />
-                                </StackPanel>
+                                    <TextBlock Grid.Row="2" Text="{x:Bind Caption}" FontSize="12" TextWrapping="Wrap"
+                                               MaxLines="2" Foreground="{StaticResource TextSecondary}" />
+                                </Grid>
                             </Border>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

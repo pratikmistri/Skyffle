@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Skyffle.Models;
 using Skyffle.Services;
+using Windows.UI;
 
 namespace Skyffle.ViewModels;
 
@@ -60,6 +61,15 @@ public sealed class DetailItem
     public string Title { get; init; } = "";
     public string Value { get; init; } = "";
     public string Caption { get; init; } = "";
+
+    /// <summary>Set only on the cards whose number means more as a position on a printed
+    /// face than as a bare figure. Null leaves the card as plain text.</summary>
+    public Controls.GaugeSpec? Gauge { get; init; }
+
+    public Microsoft.UI.Xaml.Visibility GaugeVisibility =>
+        Gauge is null ? Microsoft.UI.Xaml.Visibility.Collapsed : Microsoft.UI.Xaml.Visibility.Visible;
+    public Microsoft.UI.Xaml.Visibility PlainVisibility =>
+        Gauge is null ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
 }
 
 public partial class MainViewModel : ObservableObject
@@ -320,11 +330,44 @@ public partial class MainViewModel : ObservableObject
         Details.Clear();
         Details.Add(new DetailItem { Title = "FEELS LIKE", Value = $"{Math.Round(cur.FeelsLike)}°", Caption = FeelsCaption(cur.FeelsLike, cur.Temperature) });
         Details.Add(new DetailItem { Title = "HUMIDITY", Value = $"{cur.Humidity:0}%", Caption = DewCaption(fc) });
-        Details.Add(new DetailItem { Title = "WIND", Value = $"{cur.WindSpeed:0} km/h", Caption = $"{Compass(cur.WindDirection)} · gusts {cur.WindGusts:0} km/h" });
-        Details.Add(new DetailItem { Title = "PRESSURE", Value = $"{cur.Pressure:0} hPa", Caption = cur.Pressure >= 1013 ? "High" : "Low" });
+        // the arrow carries the direction, so the caption only has to name it in words
+        Details.Add(new DetailItem
+        {
+            Title = "WIND",
+            Value = $"{cur.WindSpeed:0}",
+            Caption = $"from {Compass(cur.WindDirection)} · gusts {cur.WindGusts:0} km/h",
+            Gauge = new Controls.GaugeSpec
+            {
+                Kind = Controls.GaugeKind.Compass,
+                Fraction = cur.WindDirection / 360.0,
+                UnitLabel = "km/h",
+            },
+        });
+        // no bands: pressure has no hazard categories to colour, only a low end and a high
+        // end, so it gets a plain tick comb and the unit tucks under the reading
+        Details.Add(new DetailItem
+        {
+            Title = "PRESSURE",
+            Value = $"{cur.Pressure:0}",
+            Caption = PressureCaption(cur.Pressure),
+            Gauge = new Controls.GaugeSpec
+            {
+                Kind = Controls.GaugeKind.Dial,
+                Fraction = Math.Clamp((cur.Pressure - 980) / 60.0, 0, 1),
+                MinLabel = "Low",
+                MaxLabel = "High",
+                UnitLabel = "hPa",
+            },
+        });
         if (daily is not null && daily.UvIndexMax.Count > 0 && daily.UvIndexMax[0] is double uv)
         {
-            Details.Add(new DetailItem { Title = "UV INDEX", Value = $"{uv:0}", Caption = UvCaption(uv) });
+            Details.Add(new DetailItem
+            {
+                Title = "UV INDEX",
+                Value = $"{uv:0}",
+                Caption = UvCaption(uv),
+                Gauge = Face(uv, 0, 12, UvBands, "0", "11+"),
+            });
         }
         if (TryVisibility(fc) is double vis)
         {
@@ -334,7 +377,13 @@ public partial class MainViewModel : ObservableObject
         {
             var sr = DateTime.Parse(daily.Sunrise[0], CultureInfo.InvariantCulture);
             var ss = DateTime.Parse(daily.Sunset[0], CultureInfo.InvariantCulture);
-            Details.Add(new DetailItem { Title = "SUNRISE", Value = sr.ToString("h:mm tt", CultureInfo.InvariantCulture), Caption = $"Sunset {ss.ToString("h:mm tt", CultureInfo.InvariantCulture)}" });
+            Details.Add(new DetailItem
+            {
+                Title = "SUNRISE",
+                Value = sr.ToString("h:mm tt", CultureInfo.InvariantCulture),
+                Caption = $"Sunset {ss.ToString("h:mm tt", CultureInfo.InvariantCulture)}",
+                Gauge = DayArc(sr, ss, cur.Time is null ? sr : DateTime.Parse(cur.Time, CultureInfo.InvariantCulture)),
+            });
         }
         if (daily is not null && daily.PrecipitationSum.Count > 0 && daily.PrecipitationSum[0] is double ps)
         {
@@ -342,7 +391,13 @@ public partial class MainViewModel : ObservableObject
         }
         if (aqi is double a)
         {
-            Details.Add(new DetailItem { Title = "AIR QUALITY", Value = $"{a:0}", Caption = AqiCaption(a) });
+            Details.Add(new DetailItem
+            {
+                Title = "AIR QUALITY",
+                Value = $"{a:0}",
+                Caption = AqiCaption(a),
+                Gauge = Face(a, 0, 300, AqiBands, "0", "300", upperInclusive: true),
+            });
         }
 
         // sun: fraction of the way from sunrise (0) to sunset (1);
@@ -454,6 +509,90 @@ public partial class MainViewModel : ObservableObject
     {
         <= 50 => "Good", <= 100 => "Moderate", <= 150 => "Unhealthy (sensitive)", <= 200 => "Unhealthy", _ => "Hazardous",
     };
+
+    private static string PressureCaption(double hPa) =>
+        hPa < 1000 ? "Low" : hPa < 1020 ? "Steady" : "High";
+
+    // ----- gauge faces -----
+    //
+    // Each band table is the same threshold list the caption above it uses, so the band the
+    // marker lands in is always the band the caption names.
+    //
+    // The ramp is the app's own: it starts on the sky blue that opens the temperature range
+    // bars (#6EC1FF), passes through the amber that closes them (#FFD36E), and ends near the
+    // coral the hero already uses for "feels like" (#FFB3AB). The usual hazard green and
+    // violet are deliberately absent — neither hue appears anywhere else in Skyffle.
+
+    private static readonly Color BandLow = Color.FromArgb(0xFF, 0x6E, 0xC1, 0xFF);
+    private static readonly Color BandMid = Color.FromArgb(0xFF, 0xFF, 0xD3, 0x6E);
+    private static readonly Color BandHigh = Color.FromArgb(0xFF, 0xFF, 0xA9, 0x6B);
+    private static readonly Color BandSevere = Color.FromArgb(0xFF, 0xFF, 0x8A, 0x7A);
+    private static readonly Color BandExtreme = Color.FromArgb(0xFF, 0xE5, 0x67, 0x7F);
+
+    private static readonly (double Upper, Color Color)[] UvBands =
+        [(3, BandLow), (6, BandMid), (8, BandHigh), (11, BandSevere), (12, BandExtreme)];
+
+    private static readonly (double Upper, Color Color)[] AqiBands =
+        [(50, BandLow), (100, BandMid), (150, BandHigh), (200, BandSevere), (300, BandExtreme)];
+
+    /// <summary>
+    /// Builds a face from a band table. The band the reading falls in is drawn at full
+    /// strength and the rest are dimmed, so "which band am I in" lands before the number does.
+    /// </summary>
+    private static Controls.GaugeSpec Face(double value, double min, double max,
+        (double Upper, Color Color)[] bands, string minLabel, string maxLabel, bool upperInclusive = false)
+    {
+        int active = bands.Length - 1;
+        for (int i = 0; i < bands.Length; i++)
+        {
+            if (upperInclusive ? value <= bands[i].Upper : value < bands[i].Upper) { active = i; break; }
+        }
+
+        var zones = new List<Controls.GaugeZone>(bands.Length);
+        double at = min;
+        foreach (var (upper, color) in bands)
+        {
+            double top = Math.Clamp(upper, min, max);
+            zones.Add(new Controls.GaugeZone
+            {
+                Extent = Math.Max(0, top - at),
+                Color = Alpha(color, zones.Count == active ? (byte)0xFF : (byte)0x4D),
+            });
+            at = top;
+        }
+
+        return new Controls.GaugeSpec
+        {
+            Fraction = Math.Clamp((value - min) / (max - min), 0, 1),
+            Zones = zones,
+            MinLabel = minLabel,
+            MaxLabel = maxLabel,
+        };
+    }
+
+    /// <summary>
+    /// The sun's path across the card: daylight is the stretch of curve above the horizon,
+    /// and the margin either side is how far the sun has sunk below it. Showing a slice of
+    /// night at both ends is what makes sunrise and sunset visible as the two crossings.
+    /// </summary>
+    private const double NightMargin = 0.2;
+
+    private static Controls.GaugeSpec DayArc(DateTime sunrise, DateTime sunset, DateTime now)
+    {
+        // the drawn window is one daylight span plus a margin of night at each end
+        const double window = 1 + 2 * NightMargin;
+        double dayLength = (sunset - sunrise).TotalMinutes;
+        double throughDay = dayLength > 1 ? (now - sunrise).TotalMinutes / dayLength : 0.5;
+        return new Controls.GaugeSpec
+        {
+            Kind = Controls.GaugeKind.DayCurve,
+            RiseFraction = NightMargin / window,
+            SetFraction = (1 + NightMargin) / window,
+            Fraction = Math.Clamp((NightMargin + throughDay) / window, 0, 1),
+        };
+    }
+
+    private static Color Alpha(Color c, byte alpha) => Color.FromArgb(alpha, c.R, c.G, c.B);
 
     private static string Compass(double deg)
     {
