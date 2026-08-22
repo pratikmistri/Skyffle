@@ -96,7 +96,8 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         {
             // debug hooks: SKYFFLE_FORCE_WMO=<code> [SKYFFLE_FORCE_NIGHT=1] previews any
             // condition; SKYFFLE_FORCE_SUN / SKYFFLE_FORCE_MOONPOS pin the sun/moon on
-            // their arcs (0..1); SKYFFLE_FORCE_MOON=0..1 pins the phase (0 new, 0.5 full)
+            // their arcs (0..1); SKYFFLE_FORCE_MOON=0..1 pins the phase (0 new, 0.5 full);
+            // SKYFFLE_FORCE_BOLT=1 makes every storm flash a drawn strike
             if (int.TryParse(Environment.GetEnvironmentVariable("SKYFFLE_FORCE_WMO"), out int forced))
             {
                 c = c with
@@ -110,6 +111,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
             if (TryEnvDouble("SKYFFLE_FORCE_MOONPOS", out double mp)) c = c with { MoonProgress01 = mp };
             if (TryEnvDouble("SKYFFLE_FORCE_MOON", out double ph)) c = c with { MoonPhase01 = ph };
             sky.ApplyWeather(c);
+            sky.AlwaysBolt = Environment.GetEnvironmentVariable("SKYFFLE_FORCE_BOLT") == "1";
             // late/cleared frames present ClearColor; keep it near what the shader
             // will draw so neither day nor night ever flashes the wrong brightness
             SkyCanvas.ClearColor = c.IsDay
@@ -126,6 +128,8 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         };
         // don't burn a full GPU frame budget on a sky nobody can see
         VisibilityChanged += (_, e) => SkyCanvas.Paused = !e.Visible;
+
+        AttachHeroContrast();
 
         // keep the shader's picture of the UI surfaces fresh so rain lands on them
         if (Content is Microsoft.UI.Xaml.FrameworkElement root)
@@ -153,6 +157,87 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
 
     private bool xamlRootHooked;
     private bool windowClosed;
+
+    private readonly List<(Windows.UI.Color Light, Windows.UI.Color Dark, Microsoft.UI.Xaml.Media.SolidColorBrush Brush)> heroInks = [];
+    private double heroDarkness;
+    private Microsoft.UI.Xaml.DispatcherTimer? contrastTimer;
+
+    /// <summary>
+    /// Adaptive ink for the condition/H-L/feels block only (the lines the low sun
+    /// actually crosses): the type cross-fades from white to a deep sky navy
+    /// (dark-on-bright is real contrast) and back as the sun moves away. The city
+    /// and big temperature keep their usual white. Nothing is drawn over the sky.
+    /// </summary>
+    private void AttachHeroContrast()
+    {
+        (TextBlock Tb, byte Alpha)[] blocks =
+        [
+            (ConditionText, 0xB8), (HiLoText, 0xB8), (FeelsText, 0x7D),
+        ];
+        foreach (var (tb, a) in blocks)
+        {
+            var light = Windows.UI.Color.FromArgb(a, 0xFF, 0xFF, 0xFF);
+            // dark ink raises thin alphas so secondary lines don't go muddy over the glow
+            var dark = Windows.UI.Color.FromArgb(Math.Max(a, (byte)0xD8), 0x14, 0x21, 0x3A);
+            var brush = new Microsoft.UI.Xaml.Media.SolidColorBrush(light);
+            tb.Foreground = brush;
+            heroInks.Add((light, dark, brush));
+        }
+        contrastTimer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        contrastTimer.Tick += (_, _) => UpdateHeroContrast();
+        contrastTimer.Start();
+        Closed += (_, _) => contrastTimer.Stop();
+    }
+
+    /// <summary>Eases the hero ink toward its target each tick (10 Hz, ~0.4 s settle).</summary>
+    private void UpdateHeroContrast()
+    {
+        if (windowClosed || Content is null) return;
+        double w = SkyCanvas.ActualWidth, h = SkyCanvas.ActualHeight;
+        if (w < 1 || h < 1 || HeroPanel.ActualWidth < 1) return;
+
+        // mirror the shader's sun placement (fractions of the canvas, hourly-card horizon)
+        double horizonFrac = 0.62;
+        try
+        {
+            var hp = HourlyCard.TransformToVisual(Content).TransformPoint(new Windows.Foundation.Point(0, 0));
+            horizonFrac = Math.Clamp(hp.Y / h, 0.30, 0.92);
+        }
+        catch { /* not in the tree yet; the fallback fraction is close enough */ }
+        double sp = sky.SunProgress;
+        double alt = Math.Sin(sp * Math.PI);
+        double sunX = w * (0.10 + 0.80 * sp);
+        double sunY = h * (horizonFrac - alt * (horizonFrac - 0.13));
+
+        // distance from the sun to the nearest point of the condition/H-L/feels
+        // block (the only lines that adapt), against the glow's effective radius
+        double target = 0;
+        try
+        {
+            var top = ConditionText.TransformToVisual(Content).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var bot = FeelsText.TransformToVisual(Content).TransformPoint(
+                new Windows.Foundation.Point(FeelsText.ActualWidth, FeelsText.ActualHeight));
+            double right = Math.Max(top.X + ConditionText.ActualWidth, bot.X);
+            double nx = Math.Clamp(sunX, top.X, right);
+            double ny = Math.Clamp(sunY, top.Y, bot.Y);
+            double dist = Math.Sqrt((sunX - nx) * (sunX - nx) + (sunY - ny) * (sunY - ny));
+            double glowR = 0.30 * h;
+            target = Math.Clamp(1.0 - dist / glowR, 0, 1) * sky.Daylight * (1.0 - sky.Cloud);
+        }
+        catch { /* transient layout churn; keep the previous target */ }
+
+        heroDarkness += (target - heroDarkness) * 0.35;
+        if (Math.Abs(target - heroDarkness) < 0.005) heroDarkness = target;
+        foreach (var (light, dark, brush) in heroInks)
+        {
+            brush.Color = LerpColor(light, dark, heroDarkness);
+        }
+    }
+
+    private static Windows.UI.Color LerpColor(Windows.UI.Color a, Windows.UI.Color b, double t) =>
+        Windows.UI.Color.FromArgb(
+            (byte)(a.A + (b.A - a.A) * t), (byte)(a.R + (b.R - a.R) * t),
+            (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
 
     private void AnimateContentOpacity(double to)
     {
@@ -292,7 +377,8 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
 
         skyEffect.ConstantBuffer = new SkyShader(
             t, res,
-            sky.Daylight, sky.Cloud, sky.Rain, sky.Snow, sky.Fog, sky.Lightning, sky.Wind,
+            sky.Daylight, sky.Cloud, sky.Rain, sky.Snow, sky.Fog, sky.Lightning,
+            sky.Bolt, sky.BoltSeed, sky.Wind,
             sky.SunProgress, sky.MoonProgress, sky.MoonPhase,
             scale,
             sky.CardA, sky.CardB, sky.CardC, sky.CardD,

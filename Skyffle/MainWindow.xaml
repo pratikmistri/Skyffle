@@ -30,31 +30,34 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <!-- hero: right-click switches °C/°F -->
-                <StackPanel Grid.Row="1" HorizontalAlignment="Left" Margin="0,140,0,10" Spacing="2"
+                <!-- hero: right-click switches °C/°F. Code-behind shifts the text ink
+                     from white to deep navy when the sun's glow drifts behind it, so
+                     the type keeps contrast without any scrim or shadow -->
+                <StackPanel x:Name="HeroPanel" Grid.Row="1" HorizontalAlignment="Left"
+                            Margin="0,140,0,10" Spacing="2"
                             Background="Transparent" RightTapped="OnHeroRightTapped"
                             ToolTipService.ToolTip="Right-click to switch between °C and °F">
-                    <TextBlock Text="{x:Bind ViewModel.LocationName, Mode=OneWay}"
+                    <TextBlock x:Name="CityText" Text="{x:Bind ViewModel.LocationName, Mode=OneWay}"
                                FontSize="20" FontWeight="Medium" HorizontalAlignment="Left"
                                Foreground="{StaticResource TextSecondary}" />
                     <!-- big bold reading; the unit shares the size and baseline but stays light;
                          negative top margin swallows the 104px line's ascent slack under the city -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="-4,-20,0,-8">
-                        <TextBlock Text="{x:Bind ViewModel.CurrentTemp, Mode=OneWay}"
+                        <TextBlock x:Name="TempText" Text="{x:Bind ViewModel.CurrentTemp, Mode=OneWay}"
                                    FontSize="104" FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimary}" />
-                        <TextBlock Text="{x:Bind ViewModel.TempUnit, Mode=OneWay}"
+                        <TextBlock x:Name="UnitText" Text="{x:Bind ViewModel.TempUnit, Mode=OneWay}"
                                    FontSize="104" FontWeight="Light" Margin="-4,0,0,0"
                                    Foreground="{StaticResource TextPrimary}" />
                     </StackPanel>
-                    <TextBlock Text="{x:Bind ViewModel.Condition, Mode=OneWay}"
+                    <TextBlock x:Name="ConditionText" Text="{x:Bind ViewModel.Condition, Mode=OneWay}"
                                FontSize="20" FontWeight="Medium" HorizontalAlignment="Left"
                                Foreground="{StaticResource TextSecondary}" />
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Spacing="12">
-                        <TextBlock Text="{x:Bind ViewModel.HiLo, Mode=OneWay}"
+                        <TextBlock x:Name="HiLoText" Text="{x:Bind ViewModel.HiLo, Mode=OneWay}"
                                    FontSize="15" FontWeight="Medium"
                                    Foreground="{StaticResource TextSecondary}" />
-                        <TextBlock Text="{x:Bind ViewModel.FeelsLikeShort, Mode=OneWay}"
+                        <TextBlock x:Name="FeelsText" Text="{x:Bind ViewModel.FeelsLikeShort, Mode=OneWay}"
                                    FontSize="15" FontWeight="Medium"
                                    Foreground="{StaticResource TextTertiary}" />
                     </StackPanel>

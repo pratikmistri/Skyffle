@@ -19,6 +19,8 @@ public sealed class SkyState
 {
     private readonly Random rng = new();
     private double flashTimer;
+    private double boltTimer;    // gap until the current strike's next return stroke
+    private int boltStrokesLeft; // return strokes still to fire in the current strike
 
     // targets (set from weather data)
     public float TargetDaylight = 1f;
@@ -30,6 +32,7 @@ public sealed class SkyState
     public float TargetSunProgress = 0.5f;  // 0 sunrise → 1 sunset
     public float TargetMoonProgress = 0.5f; // 0 sunset → 1 next sunrise
     public bool Storm;
+    public bool AlwaysBolt; // debug hook: makes every lightning event a drawn strike
 
     // UI card rectangles (scene pixels) rain lands on; written from the UI thread
     public float4 CardA;
@@ -47,6 +50,8 @@ public sealed class SkyState
     public float Fog;
     public float Wind;
     public float Lightning;
+    public float Bolt;     // brightness of a drawn strike; 0 for the far commoner sheet flash
+    public float BoltSeed; // reshuffled per strike: picks its position and jagged path
     public float SunProgress = 0.5f;
     public float MoonProgress = 0.5f;
     public float MoonPhase = 0.5f; // not eased: it moves ~3% a day, a jump is invisible
@@ -100,17 +105,45 @@ public sealed class SkyState
         SunProgress += (TargetSunProgress - SunProgress) * k;
         MoonProgress += (TargetMoonProgress - MoonProgress) * k;
 
-        // lightning: random double-flicker bursts during storms, exponential decay
+        // lightning: a cloud-lighting sheet flash is the usual event, with roughly one
+        // in four striking as a drawn bolt. Both decay exponentially; the bolt also
+        // fires a couple of return strokes, which is what makes real lightning flicker.
         Lightning *= (float)Math.Exp(-dt * 9.0);
+        Bolt *= (float)Math.Exp(-dt * 7.5);
         if (Storm)
         {
+            if (boltStrokesLeft > 0)
+            {
+                boltTimer -= dt;
+                if (boltTimer <= 0)
+                {
+                    Bolt = 0.7f + (float)rng.NextDouble() * 0.3f;
+                    Lightning = Math.Max(Lightning, 0.30f + (float)rng.NextDouble() * 0.25f);
+                    boltStrokesLeft--;
+                    boltTimer = 0.05 + rng.NextDouble() * 0.10;
+                }
+            }
+
             flashTimer -= dt;
             if (flashTimer <= 0)
             {
-                Lightning = 0.35f + (float)rng.NextDouble() * 0.45f;
-                // occasionally a quick follow-up flash, otherwise a long gap
-                flashTimer = rng.NextDouble() < 0.35 ? 0.12 + rng.NextDouble() * 0.2
-                                                     : 2.5 + rng.NextDouble() * 6.0;
+                if (AlwaysBolt || rng.NextDouble() < 0.25)
+                {
+                    // a strike: new channel, a bright flash, then 1-2 return strokes
+                    BoltSeed = (float)rng.NextDouble() * 100f;
+                    Bolt = 0.85f + (float)rng.NextDouble() * 0.15f;
+                    Lightning = 0.45f + (float)rng.NextDouble() * 0.35f;
+                    boltStrokesLeft = rng.Next(1, 3);
+                    boltTimer = 0.06 + rng.NextDouble() * 0.10;
+                    flashTimer = 9.0 + rng.NextDouble() * 16.0;
+                }
+                else
+                {
+                    Lightning = 0.35f + (float)rng.NextDouble() * 0.45f;
+                    // occasionally a quick follow-up flash, otherwise a long gap
+                    flashTimer = rng.NextDouble() < 0.30 ? 0.12 + rng.NextDouble() * 0.20
+                                                         : 6.0 + rng.NextDouble() * 12.0;
+                }
             }
         }
     }

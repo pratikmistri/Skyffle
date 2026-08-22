@@ -20,7 +20,9 @@ public readonly partial struct SkyShader : ID2D1PixelShader
     private readonly float rain;       // rain intensity 0..1
     private readonly float snow;       // snow intensity 0..1
     private readonly float fog;        // fog density 0..1
-    private readonly float lightning;  // instantaneous flash brightness 0..1
+    private readonly float lightning;  // instantaneous sheet-flash brightness 0..1
+    private readonly float bolt;       // instantaneous brightness of a drawn strike 0..1
+    private readonly float boltSeed;   // picks the channel's position and jagged path
     private readonly float wind;       // -1..1, slants precipitation
     private readonly float sunProgress;  // 0 sunrise → 1 sunset along the day arc
     private readonly float moonProgress; // 0 sunset → 1 next sunrise along the night arc
@@ -34,7 +36,8 @@ public readonly partial struct SkyShader : ID2D1PixelShader
     private readonly float4 detailsMeta; // columns, item count, cell inner margin, unused
 
     public SkyShader(float time, float2 resolution, float daylight, float cloud,
-                     float rain, float snow, float fog, float lightning, float wind,
+                     float rain, float snow, float fog, float lightning,
+                     float bolt, float boltSeed, float wind,
                      float sunProgress, float moonProgress, float moonPhase,
                      float pxScale,
                      float4 cardA, float4 cardB, float4 cardC, float4 cardD,
@@ -48,6 +51,8 @@ public readonly partial struct SkyShader : ID2D1PixelShader
         this.snow = snow;
         this.fog = fog;
         this.lightning = lightning;
+        this.bolt = bolt;
+        this.boltSeed = boltSeed;
         this.wind = wind;
         this.sunProgress = sunProgress;
         this.moonProgress = moonProgress;
@@ -105,9 +110,9 @@ public readonly partial struct SkyShader : ID2D1PixelShader
         float splash = 0.0f;
         for (int c = -1; c <= 1; c++)
         {
-            float cell = Hlsl.Floor(pos.X / 26.0f) + (float)c;
+            float cell = Hlsl.Floor(pos.X / 20.0f) + (float)c;
             float hc = Hash11(cell * 0.731f + 7.7f);
-            float cx = (cell + 0.5f) * 26.0f;
+            float cx = (cell + 0.5f) * 20.0f;
             float period = 0.45f + hc * 0.55f;
             float ph = Hlsl.Frac(t / period + hc * 11.3f);
             float act = Hlsl.Step(1.0f - rain * 0.9f, Hlsl.Frac(hc * 3.9f));
@@ -116,13 +121,25 @@ public readonly partial struct SkyShader : ID2D1PixelShader
                 float dir = (float)s * 2.0f - 1.0f;
                 float h2 = Hlsl.Frac(hc * (13.3f + (float)s * 5.1f));
                 // little parabolic arc: out along the edge, up, then pulled back down
-                float dx = dir * (5.0f + 14.0f * h2) * ph;
-                float dy = -(16.0f + 10.0f * h2) * ph + 26.0f * ph * ph;
+                float dx = dir * (4.0f + 11.0f * h2) * ph;
+                float dy = -(12.0f + 8.0f * h2) * ph + 20.0f * ph * ph;
                 float2 dp = new(cx + dx, card.Y + dy);
-                splash += Hlsl.SmoothStep(2.4f, 0.7f, Hlsl.Length(pos - dp)) * (1.0f - ph) * act;
+                splash += Hlsl.SmoothStep(1.3f, 0.35f, Hlsl.Length(pos - dp)) * (1.0f - ph) * act;
             }
         }
         return splash;
+    }
+
+    /// <summary>
+    /// Horizontal position of a lightning channel at height y (effective px). Three
+    /// octaves of noise: a broad wander, a kink every few tens of px, and fine jitter.
+    /// </summary>
+    private static float BoltX(float y, float seed, float x0, float spread)
+    {
+        float n = (Noise(new float2(seed * 31.7f, y * 0.020f)) - 0.5f) * 1.00f
+                + (Noise(new float2(seed * 57.1f + 5.0f, y * 0.070f)) - 0.5f) * 0.35f
+                + (Noise(new float2(seed * 13.3f + 9.0f, y * 0.220f)) - 0.5f) * 0.12f;
+        return x0 + n * spread;
     }
 
     private static float Hash11(float p)
@@ -312,18 +329,18 @@ public readonly partial struct SkyShader : ID2D1PixelShader
             {
                 float li = (float)i;
                 float scale = 1.0f + li * 0.9f;
-                // 18 epx columns, 320 epx streak cycles: drop size no longer grows with the window
-                float2 q = new((pp.X + pp.Y * slant) / (18.0f * scale), pp.Y / (320.0f * scale));
+                // 13 epx columns, 170 epx streak cycles: drop size no longer grows with the window
+                float2 q = new((pp.X + pp.Y * slant) / (13.0f * scale), pp.Y / (170.0f * scale));
                 float colId = Hlsl.Floor(q.X);
                 float h = Hash11(colId + li * 57.31f);
-                float speed = 2.6f + h * 1.8f - li * 0.4f;
+                float speed = 5.0f + h * 3.4f - li * 0.8f;
                 float yy = Hlsl.Frac(q.Y - t * speed + h * 19.7f);
-                float trail = Hlsl.Pow(Hlsl.Max(yy, 0.0f), 9.0f); // bright head leads the fall
+                float trail = Hlsl.Pow(Hlsl.Max(yy, 0.0f), 30.0f); // bright head leads the fall
                 float xf = Hlsl.Abs(Hlsl.Frac(q.X) - 0.5f);
-                float width = Hlsl.SmoothStep(0.11f, 0.02f, xf);
+                float width = Hlsl.SmoothStep(0.075f, 0.012f, xf);
                 float active = Hlsl.Step(1.0f - this.rain * 0.85f, h);   // more columns as intensity rises
                 float layerFade = 1.0f - li * 0.28f;
-                col += new float3(0.62f, 0.72f, 0.88f) * trail * width * active * layerFade * 0.55f
+                col += new float3(0.62f, 0.72f, 0.88f) * trail * width * active * layerFade * 0.7f
                        * (0.35f + 0.65f * this.daylight) * aboveSurface;
             }
 
@@ -339,27 +356,36 @@ public readonly partial struct SkyShader : ID2D1PixelShader
             col += new float3(0.75f, 0.83f, 0.95f) * splash * this.rain * (0.35f + 0.65f * this.daylight);
         }
 
-        // ----- snow (three parallax layers of drifting flakes) -----
+        // ----- snow (four parallax layers of drifting flakes) -----
         if (this.snow > 0.01f)
         {
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 4; i++)
             {
                 float li = (float)i;
-                float cellPx = 130.0f - li * 40.0f; // epx per flake cell, nearer layers larger
-                float fall = 170.0f + li * 80.0f;   // epx per second
+                float cellPx = 48.0f - li * 7.0f;  // epx per flake cell; far layers pack tighter
+                float fall = 70.0f - li * 13.0f;   // epx per second: near layers fall faster
                 float2 q = pp / cellPx;
                 q.Y -= t * fall / cellPx; // subtract so flakes translate downward
-                q.X += Hlsl.Sin(t * 0.7f + li * 2.1f + pp.Y * 0.0025f) * 0.8f + this.wind * t * 1.5f;
+                q.X += this.wind * t * 1.4f;
                 float2 cell = Hlsl.Floor(q);
                 float2 f = Hlsl.Frac(q);
                 float h = Hash21(cell + li * 31.7f);
-                float2 jitter = new(Hlsl.Frac(h * 13.7f), Hlsl.Frac(h * 71.3f));
-                float d = Hlsl.Length(f - (0.25f + jitter * 0.5f));
-                float radius = 0.06f + Hlsl.Frac(h * 5.1f) * 0.07f;
-                float flake = Hlsl.SmoothStep(radius, radius * 0.35f, d);
-                float active = Hlsl.Step(1.0f - this.snow * 0.75f, Hlsl.Frac(h * 3.3f));
-                float layerFade = 1.0f - li * 0.25f;
-                col += new float3(0.95f, 0.96f, 1.0f) * flake * active * layerFade * 0.8f
+                float hx = Hlsl.Frac(h * 13.7f);
+                float hy = Hlsl.Frac(h * 71.3f);
+                float hr = Hlsl.Frac(h * 5.1f);
+                // every flake flutters on its own sine, so no two drift alike
+                float sway = Hlsl.Sin(t * (0.5f + hx * 1.3f) + h * 28.0f) * (0.03f + hy * 0.07f);
+                float bob = Hlsl.Sin(t * (0.8f + hy * 1.1f) + hx * 17.0f) * 0.03f;
+                float2 centre = new(0.25f + hx * 0.5f + sway, 0.25f + hy * 0.5f + bob);
+                float d = Hlsl.Length(f - centre);
+                // squared distribution: mostly fine grains with the occasional fat flake,
+                // floored at ~1 epx so far-layer specks never shimmer sub-pixel
+                float radius = Hlsl.Max(0.028f + hr * hr * 0.075f, 1.0f / cellPx);
+                float flake = Hlsl.SmoothStep(radius, radius * 0.25f, d);
+                float active = Hlsl.Step(1.0f - this.snow * 0.8f, Hlsl.Frac(h * 3.3f));
+                float layerFade = 1.0f - li * 0.17f;
+                col += new float3(0.95f, 0.96f, 1.0f) * flake * active * layerFade
+                       * (0.55f + 0.45f * hr) * 0.85f
                        * (0.45f + 0.55f * this.daylight);
             }
         }
@@ -373,7 +399,36 @@ public readonly partial struct SkyShader : ID2D1PixelShader
             col = Hlsl.Lerp(col, fogCol, Hlsl.Saturate(fogAmt));
         }
 
-        // ----- lightning flash -----
+        // ----- lightning: a drawn strike now and then, over the usual sheet flash -----
+        if (this.bolt > 0.001f)
+        {
+            float sceneW = this.resolution.X / this.pxScale;
+            float sceneH = this.resolution.Y / this.pxScale;
+            float hs = Hash11(this.boltSeed * 3.1f);
+            float x0 = (0.12f + hs * 0.76f) * sceneW;               // where it comes down
+            float yEnd = sceneH * (0.42f + Hlsl.Frac(this.boltSeed * 7.7f) * 0.30f);
+            float depth = Hlsl.Saturate(pp.Y / sceneH);             // wanders wider as it descends
+            float spread = 150.0f * (0.20f + depth);
+
+            float dMain = Hlsl.Abs(pp.X - BoltX(pp.Y, this.boltSeed, x0, spread));
+            float aliveMain = Hlsl.SmoothStep(yEnd, yEnd - 90.0f, pp.Y);
+            float channel = (Hlsl.SmoothStep(1.8f, 0.3f, dMain) + Hlsl.SmoothStep(34.0f, 2.0f, dMain) * 0.20f)
+                            * aliveMain;
+
+            // one fork peeling off the lower half, thinner and shorter than the trunk
+            float yFork = yEnd * 0.55f;
+            float dir = Hlsl.Sign(hs - 0.5f);
+            float forkX = BoltX(pp.Y, this.boltSeed + 3.7f, x0, spread * 0.7f)
+                          + dir * (pp.Y - yFork) * 0.55f;
+            float dFork = Hlsl.Abs(pp.X - forkX);
+            float aliveFork = Hlsl.Step(yFork, pp.Y) * Hlsl.SmoothStep(yEnd * 0.92f, yEnd * 0.92f - 60.0f, pp.Y);
+            channel += (Hlsl.SmoothStep(1.2f, 0.2f, dFork) + Hlsl.SmoothStep(22.0f, 2.0f, dFork) * 0.14f)
+                       * aliveFork * 0.75f;
+
+            col += new float3(0.86f, 0.90f, 1.0f) * channel * this.bolt;
+        }
+
+        // ----- lightning sheet flash -----
         col += new float3(0.90f, 0.92f, 1.0f) * this.lightning;
 
         // ----- gentle vignette for depth -----
