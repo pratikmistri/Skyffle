@@ -257,19 +257,32 @@ public partial class MainViewModel : ObservableObject
         FeelsLikeShort = $"Feels like {Math.Round(cur.FeelsLike)}°";
 
         // cur.Time is a 15-minute step (e.g. 14:30); truncate to the hour so the
-        // in-progress hour (14:00) is the "Now" slot, matching the hero reading
-        var nowLocal = DateTime.Parse(cur.Time!, CultureInfo.InvariantCulture);
-        var nowHour = new DateTime(nowLocal.Year, nowLocal.Month, nowLocal.Day, nowLocal.Hour, 0, 0);
+        // in-progress hour (14:00) is the "Now" slot, matching the hero reading.
+        // Stays nullable: the model allows a response without it, and everything
+        // downstream would rather lose its "now" marker than fail the whole load.
+        DateTime? nowExact = null;
+        DateTime? nowHour = null;
+        if (cur.Time is not null &&
+            DateTime.TryParse(cur.Time, CultureInfo.InvariantCulture, DateTimeStyles.None, out var nowLocal))
+        {
+            nowExact = nowLocal;
+            nowHour = new DateTime(nowLocal.Year, nowLocal.Month, nowLocal.Day, nowLocal.Hour, 0, 0);
+        }
 
         // ----- hourly: next 24 from now -----
         Hours.Clear();
         var hourly = fc.Hourly;
         if (hourly is not null && hourly.Time.Count > 0)
         {
+            // without a clock reading there is no "now" to skip to, so the strip
+            // simply starts at the beginning of what the forecast returned
             int start = 0;
-            for (int i = 0; i < hourly.Time.Count; i++)
+            if (nowHour is { } from)
             {
-                if (DateTime.Parse(hourly.Time[i], CultureInfo.InvariantCulture) >= nowHour) { start = i; break; }
+                for (int i = 0; i < hourly.Time.Count; i++)
+                {
+                    if (DateTime.Parse(hourly.Time[i], CultureInfo.InvariantCulture) >= from) { start = i; break; }
+                }
             }
             // parallel arrays are deserialized independently; bound by every list we index
             int hourEnd = Math.Min(Math.Min(start + 24, hourly.Time.Count),
@@ -280,7 +293,9 @@ public partial class MainViewModel : ObservableObject
                 double? pp = i < hourly.PrecipProbability.Count ? hourly.PrecipProbability[i] : null;
                 Hours.Add(new HourItem
                 {
-                    TimeLabel = i == start ? "Now" : ht.ToString("h tt", CultureInfo.InvariantCulture).Replace(" ", "").ToLowerInvariant(),
+                    TimeLabel = i == start && nowHour is not null
+                        ? "Now"
+                        : ht.ToString("h tt", CultureInfo.InvariantCulture).Replace(" ", "").ToLowerInvariant(),
                     Glyph = Wmo.Glyph(hourly.WeatherCode[i], i < hourly.IsDay.Count && hourly.IsDay[i] == 1),
                     Temp = $"{Math.Round(hourly.Temperature[i])}°",
                     PrecipProb = pp is > 15 ? $"{pp:0}%" : "",
@@ -382,7 +397,7 @@ public partial class MainViewModel : ObservableObject
                 Title = "SUNRISE",
                 Value = sr.ToString("h:mm tt", CultureInfo.InvariantCulture),
                 Caption = $"Sunset {ss.ToString("h:mm tt", CultureInfo.InvariantCulture)}",
-                Gauge = DayArc(sr, ss, cur.Time is null ? sr : DateTime.Parse(cur.Time, CultureInfo.InvariantCulture)),
+                Gauge = DayArc(sr, ss, nowExact ?? sr),
             });
         }
         if (daily is not null && daily.PrecipitationSum.Count > 0 && daily.PrecipitationSum[0] is double ps)
@@ -396,7 +411,9 @@ public partial class MainViewModel : ObservableObject
                 Title = "AIR QUALITY",
                 Value = $"{a:0}",
                 Caption = AqiCaption(a),
-                Gauge = Face(a, 0, 300, AqiBands, "0", "300", upperInclusive: true),
+                // "300+" not "300": US AQI runs to 500, and everything past the end of the
+                // face clamps to the same spot, so the label has to admit the scale continues
+                Gauge = Face(a, 0, 300, AqiBands, "0", "300+", upperInclusive: true),
             });
         }
 
@@ -404,11 +421,10 @@ public partial class MainViewModel : ObservableObject
         // moon: fraction of the night from sunset (0) to the next sunrise (1)
         double sunProgress = 0.5;
         double moonProgress = 0.5;
-        if (daily is not null && daily.Sunrise.Count > 0 && daily.Sunset.Count > 0 && cur.Time is not null)
+        if (daily is not null && daily.Sunrise.Count > 0 && daily.Sunset.Count > 0 && nowExact is { } now)
         {
             var sr = DateTime.Parse(daily.Sunrise[0], CultureInfo.InvariantCulture);
             var ss = DateTime.Parse(daily.Sunset[0], CultureInfo.InvariantCulture);
-            var now = DateTime.Parse(cur.Time, CultureInfo.InvariantCulture);
             double spanMin = (ss - sr).TotalMinutes;
             if (spanMin > 1)
             {
@@ -444,7 +460,7 @@ public partial class MainViewModel : ObservableObject
     /// plot its own 24-hour curve without another request — the forecast already carries
     /// every hour of the ten days it returns.
     /// </summary>
-    private static Dictionary<DateOnly, List<HourPoint>> BuildDayCurves(HourlyBlock? hourly, DateTime nowHour)
+    private static Dictionary<DateOnly, List<HourPoint>> BuildDayCurves(HourlyBlock? hourly, DateTime? nowHour)
     {
         var curves = new Dictionary<DateOnly, List<HourPoint>>();
         if (hourly is null) return curves;
@@ -465,7 +481,7 @@ public partial class MainViewModel : ObservableObject
                 PrecipProbability = i < hourly.PrecipProbability.Count ? hourly.PrecipProbability[i] : null,
                 Glyph = Wmo.Glyph(hourly.WeatherCode[i], i < hourly.IsDay.Count && hourly.IsDay[i] == 1),
                 Description = Wmo.Describe(hourly.WeatherCode[i]),
-                IsNow = t == nowHour,
+                IsNow = nowHour is { } n && t == n,
             });
         }
         return curves;

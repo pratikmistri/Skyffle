@@ -115,7 +115,11 @@
                                 <DataTemplate x:DataType="vm:DayItem">
                                     <StackPanel>
                                         <!-- the whole row is the disclosure control -->
+                                        <!-- a day the forecast returned no hours for can't open, so it
+                                             stops behaving like a control: no hover plate, no tooltip,
+                                             no chevron below -->
                                         <Button Style="{StaticResource DayRowButton}" Click="OnDayRowClick"
+                                                IsHitTestVisible="{x:Bind HasHours}"
                                                 ToolTipService.ToolTip="Show this day's hourly forecast">
                                             <!-- the plate is the only thing hover/press change; the row keeps reading as a row -->
                                             <Button.Resources>
@@ -160,6 +164,7 @@
                                                            Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"
                                                            HorizontalAlignment="Right" />
                                                 <TextBlock Grid.Column="6" Text="{x:Bind ExpandGlyph, Mode=OneWay}"
+                                                           Visibility="{x:Bind HasHours}"
                                                            FontFamily="Segoe Fluent Icons" FontSize="11"
                                                            Foreground="{StaticResource TextTertiary}"
                                                            VerticalAlignment="Center" HorizontalAlignment="Right" />
